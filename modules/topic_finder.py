@@ -17,7 +17,12 @@ def _load_published_slugs(store_path: Path) -> set:
         return set()
     with open(slugs_file) as f:
         data = json.load(f)
-    return {item["slug"] for item in data}
+    result = set()
+    for item in data:
+        result.add(item["slug"])
+        if item.get("topic"):
+            result.add(_slugify(item["topic"]))
+    return result
 
 
 def _fetch_rss_topics(keywords: list[str], niche: str) -> list[str]:

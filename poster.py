@@ -31,9 +31,9 @@ def load_published_slugs(store_path: Path) -> list[dict]:
         return json.load(f)
 
 
-def save_published_slug(store_path: Path, slug: str):
+def save_published_slug(store_path: Path, slug: str, topic: str = ""):
     slugs = load_published_slugs(store_path)
-    slugs.append({"slug": slug, "date": date.today().isoformat()})
+    slugs.append({"slug": slug, "topic": topic, "date": date.today().isoformat()})
     with open(store_path / "published_slugs.json", "w") as f:
         json.dump(slugs, f, indent=2)
 
@@ -81,7 +81,7 @@ def main():
     print(f"      Published: {result['handle']} (id: {result['id']})")
 
     slug = slugify(article["title"])
-    save_published_slug(store_path, slug)
+    save_published_slug(store_path, slug, topic)
     print(f"      Slug saved: {slug}")
     print("\nDone.")
 
