@@ -1,0 +1,31 @@
+{
+  "name": "Lunara Light",
+  "shopify_domain": "fheegt-kv.myshopify.com",
+  "blog_id": "gid://shopify/Blog/118091645267",
+  "niche": "women's beauty and wellness gadgets for home use",
+  "audience": "women aged 25-45 interested in at-home beauty treatments, skin care, and wellness devices",
+  "keywords": [
+    "LED light therapy for skin",
+    "at-home beauty devices",
+    "facial LED mask",
+    "hair removal device",
+    "skin rejuvenation at home",
+    "anti-aging beauty gadgets"
+  ],
+  "author": "Lunara Light Editorial",
+  "language": "en",
+  "tone": "warm, empowering and informative",
+  "internal_links": [
+    {"anchor": "LED Facial Sculptor", "url": "https://lunara-light.com/products/lunaralight-7-in-1-led-facial-sculptor-travel-case"},
+    {"anchor": "Mini Hair Removal Device", "url": "https://lunara-light.com/products/lunara-light-mini-home-hair-removal-device"},
+    {"anchor": "shop all devices", "url": "https://lunara-light.com/collections/all"}
+  ],
+  "evergreen_topics": [
+    "how does LED light therapy work for skin",
+    "best at-home beauty devices for women",
+    "red light vs blue light therapy for face",
+    "how to get salon results at home",
+    "anti-aging skincare routine with LED devices"
+  ],
+  "unsplash_query": "woman skincare beauty LED light therapy"
+}

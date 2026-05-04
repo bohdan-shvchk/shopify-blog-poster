@@ -1,0 +1,31 @@
+name: Daily Blog Post
+
+on:
+  schedule:
+    - cron: "0 7 * * *"
+  workflow_dispatch:
+
+jobs:
+  post:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - run: pip install groq requests pytrends feedparser
+
+      - run: python poster.py --store my-store
+        env:
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+          SHOPIFY_TOKEN: ${{ secrets.SHOPIFY_ACCESS_TOKEN_MY_STORE }}
+          UNSPLASH_KEY: ${{ secrets.UNSPLASH_ACCESS_KEY }}
+
+      - run: |
+          git config user.name "blog-bot"
+          git config user.email "bot@agency.com"
+          git add stores/
+          git diff --cached --quiet || git commit -m "log: published blog post $(date +%Y-%m-%d)"
+          git push
