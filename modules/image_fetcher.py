@@ -3,14 +3,14 @@ import re
 import requests
 
 
-def _fetch_pexels(query: str, count: int = 1) -> list:
+def _fetch_pexels(query: str, count: int = 1, page: int = 1) -> list:
     key = os.environ.get("PEXELS_KEY")
     if not key:
         return []
     try:
         resp = requests.get(
             "https://api.pexels.com/v1/search",
-            params={"query": query, "per_page": count, "orientation": "landscape"},
+            params={"query": query, "per_page": count, "page": page, "orientation": "landscape"},
             headers={"Authorization": key},
             timeout=10,
         )
@@ -21,14 +21,14 @@ def _fetch_pexels(query: str, count: int = 1) -> list:
         return []
 
 
-def _fetch_unsplash(query: str, count: int = 1) -> list:
+def _fetch_unsplash(query: str, count: int = 1, page: int = 1) -> list:
     key = os.environ.get("UNSPLASH_KEY")
     if not key:
         return []
     try:
         resp = requests.get(
             "https://api.unsplash.com/search/photos",
-            params={"query": query, "per_page": count, "orientation": "landscape"},
+            params={"query": query, "per_page": count, "page": page, "orientation": "landscape"},
             headers={"Authorization": f"Client-ID {key}"},
             timeout=10,
         )
@@ -40,10 +40,9 @@ def _fetch_unsplash(query: str, count: int = 1) -> list:
 
 
 def fetch_images(query: str, count: int = 3) -> list:
-    urls = _fetch_pexels(query, count)
-    if not urls:
-        urls = _fetch_unsplash(query, count)
-    return urls
+    cover = _fetch_pexels(query, count=1, page=1) or _fetch_unsplash(query, count=1, page=1)
+    inline = _fetch_pexels(query, count=count - 1, page=2) or _fetch_unsplash(query, count=count - 1, page=2)
+    return cover + inline
 
 
 def inject_images_into_html(html: str, image_urls: list) -> str:
