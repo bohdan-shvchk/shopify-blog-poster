@@ -1,6 +1,7 @@
 {
   "name": "Lunara Light",
   "shopify_domain": "fheegt-kv.myshopify.com",
+  "public_domain": "https://lunara-light.com",
   "blog_id": "gid://shopify/Blog/118091645267",
   "niche": "women's beauty and wellness gadgets for home use",
   "audience": "women aged 25-45 interested in at-home beauty treatments, skin care, and wellness devices",
@@ -10,22 +11,47 @@
     "facial LED mask",
     "hair removal device",
     "skin rejuvenation at home",
-    "anti-aging beauty gadgets"
+    "anti-aging beauty gadgets",
+    "microcurrent face device",
+    "red light therapy face"
   ],
   "author": "Lunara Light Editorial",
+  "author_name": "Lunara Light Editorial",
+  "author_bio": "An editorial team that researches at-home beauty technology, tests devices in real-world conditions, and consults dermatology and FDA guidance before publishing.",
+  "author_url": "https://lunara-light.com/pages/about",
   "language": "en",
   "tone": "warm, empowering and informative",
+  "image_query": "woman skincare beauty",
   "internal_links": [
     {"anchor": "LED Facial Sculptor", "url": "https://lunara-light.com/products/lunaralight-7-in-1-led-facial-sculptor-travel-case"},
     {"anchor": "Mini Hair Removal Device", "url": "https://lunara-light.com/products/lunara-light-mini-home-hair-removal-device"},
     {"anchor": "shop all devices", "url": "https://lunara-light.com/collections/all"}
   ],
   "evergreen_topics": [
-    "how does LED light therapy work for skin",
-    "best at-home beauty devices for women",
-    "red light vs blue light therapy for face",
-    "how to get salon results at home",
-    "anti-aging skincare routine with LED devices"
-  ],
-  "unsplash_query": "woman skincare beauty LED light therapy"
+    "How LED light therapy actually works on skin: the science explained",
+    "Red light vs blue light therapy: which one does what for your face",
+    "How to build a beginner-friendly at-home LED therapy routine",
+    "Microcurrent face devices: what they do and who they help",
+    "IPL vs laser hair removal at home: the honest comparison",
+    "How to layer skincare around an LED mask for maximum results",
+    "Common LED therapy myths debunked by dermatology research",
+    "A buyer's guide to FDA-cleared at-home beauty devices",
+    "How to safely use red light therapy if you have sensitive skin",
+    "The history of light-based skin treatments, from clinics to home devices",
+    "Anti-aging beauty gadgets: which ones have real evidence behind them",
+    "Skin tightening at home: techniques that work and ones that don't",
+    "How often should you use an LED face mask? A practical schedule",
+    "How to combine LED therapy with retinol, vitamin C and niacinamide",
+    "Best at-home device routines for hyperpigmentation and dark spots",
+    "Caring for your beauty devices: cleaning, storage and battery life",
+    "Hormonal acne and at-home light therapy: what to expect",
+    "Cold tools, gua sha and microcurrent: which de-puffs the face fastest",
+    "Pre-event skincare: a 7-day at-home device protocol",
+    "Postpartum skincare with at-home devices: what's safe and what isn't",
+    "Travel-friendly beauty gadgets: what's actually worth packing",
+    "How to know if a beauty device is truly FDA-cleared",
+    "Red light therapy for hair growth: what the research really says",
+    "Menopause skin changes and at-home device strategies",
+    "Sun damage repair at home: realistic expectations from LED therapy"
+  ]
 }

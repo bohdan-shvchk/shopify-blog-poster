@@ -1,8 +1,21 @@
-import feedparser
-import json
+"""Discover candidate topics from Google News RSS and score them.
+
+Scoring is purely heuristic — pytrends was archived in April 2025 and using it
+produces stale or rate-limited data. We rely on:
+  - title quality prefixes (how to / best / top / vs / why)
+  - long-tail bonus (5-9 words)
+  - source diversity (number of RSS hits for the same headline stem)
+  - recency (RSS feeds are already chronologically ordered)
+"""
+from __future__ import annotations
+
 import re
-from datetime import datetime, timedelta
-from pathlib import Path
+from urllib.parse import quote_plus
+
+import feedparser
+
+
+_PRIORITY_PREFIXES = ("how to", "what is", "best", "top ", "why ", "vs ", "is ", "are ")
 
 
 def _slugify(text: str) -> str:
@@ -11,93 +24,66 @@ def _slugify(text: str) -> str:
     return re.sub(r"[\s_-]+", "-", text)
 
 
-def _load_published_slugs(store_path: Path) -> set:
-    slugs_file = store_path / "published_slugs.json"
-    if not slugs_file.exists():
-        return set()
-    with open(slugs_file) as f:
-        data = json.load(f)
-    result = set()
-    for item in data:
-        result.add(item["slug"])
-        if item.get("topic"):
-            result.add(_slugify(item["topic"]))
-    return result
+def _score(title: str, source_count: int) -> float:
+    score = 1.0 + min(source_count, 5) * 0.5
+    lower = title.lower()
+    if any(lower.startswith(p) for p in _PRIORITY_PREFIXES):
+        score += 2.0
+    word_count = len(title.split())
+    if 5 <= word_count <= 9:
+        score += 1.0
+    if "?" in title:
+        score += 0.5
+    if any(year in title for year in ("2026", "2027")):
+        score += 0.5
+    return score
 
 
-def _fetch_rss_topics(keywords: list[str], niche: str) -> list[str]:
-    topics = []
-    queries = keywords[:3] + [f"{niche} 2026", f"best {niche}"]
-    for query in queries:
-        url = f"https://news.google.com/rss/search?q={query.replace(' ', '+')}&hl=en-US&gl=US&ceid=US:en"
-        try:
-            feed = feedparser.parse(url)
-            for entry in feed.entries[:5]:
-                title = entry.get("title", "").split(" - ")[0].strip()
-                if title and len(title) > 10:
-                    topics.append(title)
-        except Exception:
-            continue
-    return topics
-
-
-def _check_trends(topics: list[str]) -> list[tuple[str, float]]:
+def _fetch_rss(query: str, limit: int = 8) -> list[str]:
+    url = f"https://news.google.com/rss/search?q={quote_plus(query)}&hl=en-US&gl=US&ceid=US:en"
     try:
-        from pytrends.request import TrendReq
-        pytrends = TrendReq(hl="en-US", tz=360, timeout=(10, 25))
-        scored = []
-        for topic in topics[:5]:
-            try:
-                pytrends.build_payload([topic], timeframe="now 7-d")
-                interest = pytrends.interest_over_time()
-                if not interest.empty:
-                    score = float(interest[topic].mean())
-                else:
-                    score = 0.0
-                scored.append((topic, score))
-            except Exception:
-                scored.append((topic, 50.0))
-        return sorted(scored, key=lambda x: x[1], reverse=True)
+        feed = feedparser.parse(url)
     except Exception:
-        return [(t, 50.0) for t in topics]
+        return []
+    titles = []
+    for entry in feed.entries[:limit]:
+        title = entry.get("title", "").split(" - ")[0].strip()
+        if title and len(title) > 12:
+            titles.append(title)
+    return titles
 
 
-def _filter_topics(topics: list[str], published_slugs: set) -> list[str]:
-    priority_prefixes = ("how to", "what is", "best", "why", "top ")
-    seen_slugs = set()
-    filtered = []
-    for topic in topics:
-        slug = _slugify(topic)
-        if slug in published_slugs or slug in seen_slugs:
-            continue
-        seen_slugs.add(slug)
-        score = 1
-        if any(topic.lower().startswith(p) for p in priority_prefixes):
-            score += 1
-        filtered.append((topic, score))
-    filtered.sort(key=lambda x: x[1], reverse=True)
-    return [t for t, _ in filtered]
-
-
-def find_topic(config: dict, store_path: Path) -> str:
-    published_slugs = _load_published_slugs(store_path)
+def discover_candidates(config: dict) -> list[dict]:
+    """Returns list of {topic, score, source} for new candidates from RSS."""
     niche = config["niche"]
     keywords = config.get("keywords", [])
-    evergreen = config.get("evergreen_topics", [])
 
-    raw_topics = _fetch_rss_topics(keywords, niche)
+    queries = list(dict.fromkeys(
+        keywords[:5]
+        + [f"best {niche}", f"how to {niche}", f"{niche} 2026", f"{niche} guide"]
+    ))
 
-    if not raw_topics:
-        return evergreen[0] if evergreen else f"guide to {niche}"
+    titles_per_query = [(_fetch_rss(q)) for q in queries]
 
-    filtered = _filter_topics(raw_topics, published_slugs)
+    raw_counts: dict[str, int] = {}
+    for titles in titles_per_query:
+        for title in titles:
+            stem = _slugify(title)[:60]
+            raw_counts[stem] = raw_counts.get(stem, 0) + 1
 
-    if not filtered:
-        unused_evergreen = [t for t in evergreen if _slugify(t) not in published_slugs]
-        return unused_evergreen[0] if unused_evergreen else f"ultimate guide to {niche}"
+    candidates = []
+    seen_stems = set()
+    for titles in titles_per_query:
+        for title in titles:
+            stem = _slugify(title)[:60]
+            if stem in seen_stems:
+                continue
+            seen_stems.add(stem)
+            candidates.append({
+                "topic": title,
+                "score": _score(title, raw_counts.get(stem, 1)),
+                "source": "rss",
+            })
 
-    top5 = filtered[:5]
-    scored = _check_trends(top5)
-    best = scored[0][0] if scored else top5[0]
-
-    return best
+    candidates.sort(key=lambda c: c["score"], reverse=True)
+    return candidates[:25]
