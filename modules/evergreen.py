@@ -13,9 +13,12 @@ import json
 import os
 import re
 
-from groq import Groq
+from anthropic import Anthropic
 
 from modules import dedup
+
+
+_MODEL = "claude-haiku-4-5-20251001"
 
 
 _CATEGORIES = [
@@ -67,7 +70,7 @@ Return STRICT JSON: {{"topics": ["...", "...", ...]}}."""
 
 def replenish(config: dict, published_topics: list[str], n: int = 20) -> list[str]:
     """Ask the LLM for n new evergreen ideas. Returns the topic strings."""
-    client = Groq(api_key=os.environ["GROQ_API_KEY"])
+    client = Anthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
     prompt = _GEN_PROMPT.format(
         n=n,
         niche=config["niche"],
@@ -75,18 +78,17 @@ def replenish(config: dict, published_topics: list[str], n: int = 20) -> list[st
         published="\n".join(f"- {t}" for t in published_topics[-30:]) or "- (none)",
         categories="\n".join(f"- {c}" for c in _CATEGORIES),
     )
-    response = client.chat.completions.create(
-        model="meta-llama/llama-4-scout-17b-16e-instruct",
-        messages=[
-            {"role": "system", "content": "You generate diverse, evergreen blog topic ideas. Return strict JSON only."},
-            {"role": "user", "content": prompt},
-        ],
-        temperature=0.8,
+    response = client.messages.create(
+        model=_MODEL,
         max_tokens=1500,
-        response_format={"type": "json_object"},
+        system="You generate diverse, evergreen blog topic ideas. Return strict JSON only.",
+        messages=[{"role": "user", "content": prompt}],
     )
-    raw = response.choices[0].message.content.strip()
+    raw = response.content[0].text.strip()
     raw = re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f]", "", raw)
+    match = re.search(r"\{.*\}", raw, re.DOTALL)
+    if match:
+        raw = match.group(0)
     data = json.loads(raw)
     topics = [t.strip() for t in data.get("topics", []) if isinstance(t, str) and t.strip()]
     return topics[:n]

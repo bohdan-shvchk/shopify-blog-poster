@@ -29,10 +29,9 @@ jobs:
 
       - run: python poster.py --store my-store
         env:
-          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           SHOPIFY_TOKEN: ${{ secrets.SHOPIFY_ACCESS_TOKEN_MY_STORE }}
           PEXELS_KEY: ${{ secrets.PEXELS_KEY }}
-          UNSPLASH_KEY: ${{ secrets.UNSPLASH_ACCESS_KEY }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
 

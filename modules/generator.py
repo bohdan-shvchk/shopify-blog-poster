@@ -2,7 +2,10 @@ import json
 import os
 import re
 
-from groq import Groq
+from anthropic import Anthropic
+
+
+_MODEL = "claude-haiku-4-5-20251001"
 
 
 _SYSTEM_PROMPT = """You are an expert SEO content writer for an e-commerce store.
@@ -69,7 +72,7 @@ def _parse_json_response(raw: str) -> dict:
 
 
 def generate_article(topic: str, config: dict, product_catalog_text: str, published_topics: list[str]) -> dict:
-    client = Groq(api_key=os.environ["GROQ_API_KEY"])
+    client = Anthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
 
     published_sample = "\n".join(f"- {t}" for t in published_topics[-15:]) or "- (none yet)"
     catalog = product_catalog_text.strip() or "(no products available — write educational content without product links)"
@@ -86,24 +89,10 @@ def generate_article(topic: str, config: dict, product_catalog_text: str, publis
         published_topics=published_sample,
     )
 
-    models = ["meta-llama/llama-4-scout-17b-16e-instruct", "llama-3.3-70b-versatile"]
-    last_error = None
-
-    for model in models:
-        try:
-            response = client.chat.completions.create(
-                model=model,
-                messages=[
-                    {"role": "system", "content": _SYSTEM_PROMPT},
-                    {"role": "user", "content": prompt},
-                ],
-                temperature=0.6,
-                max_tokens=4096,
-                response_format={"type": "json_object"},
-            )
-            return _parse_json_response(response.choices[0].message.content)
-        except Exception as e:
-            last_error = e
-            continue
-
-    raise RuntimeError(f"All models failed. Last error: {last_error}")
+    response = client.messages.create(
+        model=_MODEL,
+        max_tokens=4096,
+        system=_SYSTEM_PROMPT,
+        messages=[{"role": "user", "content": prompt}],
+    )
+    return _parse_json_response(response.content[0].text)

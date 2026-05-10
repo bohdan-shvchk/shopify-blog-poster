@@ -26,34 +26,13 @@ def _fetch_pexels(query: str, count: int = 1, page: int = 1) -> list:
         return []
 
 
-def _fetch_unsplash(query: str, count: int = 1, page: int = 1) -> list:
-    key = os.environ.get("UNSPLASH_KEY")
-    if not key or count < 1:
-        return []
-    try:
-        resp = requests.get(
-            "https://api.unsplash.com/search/photos",
-            params={"query": query, "per_page": count, "page": page, "orientation": "landscape"},
-            headers={"Authorization": f"Client-ID {key}"},
-            timeout=10,
-        )
-        resp.raise_for_status()
-        results = resp.json().get("results", [])
-        return [r["urls"]["regular"] for r in results]
-    except Exception:
-        return []
-
-
 def fetch_images(primary_query: str, fallback_query: str, count: int = 3) -> list:
     """Try the topic-specific query first; fall back to the broader niche query
     if the topic query yields nothing. Cover and inline use different pages so
     we never serve the same image twice."""
-    def grab(query, page, n):
-        return _fetch_pexels(query, n, page) or _fetch_unsplash(query, n, page)
-
-    cover = grab(primary_query, 1, 1) or grab(fallback_query, 1, 1)
+    cover = _fetch_pexels(primary_query, 1, 1) or _fetch_pexels(fallback_query, 1, 1)
     inline_n = max(0, count - 1)
-    inline = grab(primary_query, 2, inline_n) or grab(fallback_query, 2, inline_n)
+    inline = _fetch_pexels(primary_query, inline_n, 2) or _fetch_pexels(fallback_query, inline_n, 2)
     return cover + inline
 
 
