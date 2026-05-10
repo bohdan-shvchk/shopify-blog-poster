@@ -3,6 +3,7 @@ import argparse
 import json
 import re
 import sys
+import urllib.request
 from datetime import date
 from pathlib import Path
 
@@ -14,6 +15,22 @@ from modules.publisher import publish_article
 
 _MAX_GENERATION_RETRIES = 2
 _MAX_TOPIC_FALLBACKS = 3
+
+
+def send_telegram(message: str) -> None:
+    import os
+    token = os.environ.get("TELEGRAM_BOT_TOKEN", "")
+    chat_id = os.environ.get("TELEGRAM_CHAT_ID", "")
+    if not token or not chat_id:
+        print(f"[Telegram skipped] {message}")
+        return
+    url = f"https://api.telegram.org/bot{token}/sendMessage"
+    data = json.dumps({"chat_id": chat_id, "text": f"[Shopify] {message}"}).encode()
+    req = urllib.request.Request(url, data=data, headers={"Content-Type": "application/json"})
+    try:
+        urllib.request.urlopen(req, timeout=10)
+    except Exception as e:
+        print(f"Telegram failed: {e}")
 
 
 def slugify(text: str) -> str:
@@ -130,6 +147,7 @@ def main():
             break
     if not pick:
         print("ERROR: no safe topic could be found. Skipping today.")
+        send_telegram("No safe topic found. Skipping today.")
         sys.exit(0)
     topic = pick["topic"]
     print(f"      Topic: {topic}  (source: {pick['source']})")
@@ -139,11 +157,17 @@ def main():
         catalog = products.get_products(store_path, config)
     except Exception as e:
         print(f"      WARN: could not fetch products: {e}")
+        send_telegram(f"WARN: product fetch failed: {e}")
         catalog = []
     print(f"      {len(catalog)} active products available for grounding")
 
     print("[4/6] Generating article (with quality gate)...")
-    article = generate_with_quality_gate(topic, config, catalog, pub_topics)
+    try:
+        article = generate_with_quality_gate(topic, config, catalog, pub_topics)
+    except RuntimeError as e:
+        print(f"ERROR: {e}")
+        send_telegram(f"Quality gate failed for topic: {topic}\n{e}")
+        sys.exit(0)
     print(f"      Title: {article['title']}")
 
     print("[5/6] Fetching images...")
@@ -174,6 +198,7 @@ def main():
     })
     save_published(store_path, pub_records)
     topic_pool.remove(store_path, topic)
+    send_telegram(f"Published: {article['title']}")
     print(f"      Slug saved: {slug}")
     print("\nDone.")
 

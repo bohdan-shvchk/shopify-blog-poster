@@ -33,6 +33,8 @@ jobs:
           SHOPIFY_TOKEN: ${{ secrets.SHOPIFY_ACCESS_TOKEN_MY_STORE }}
           PEXELS_KEY: ${{ secrets.PEXELS_KEY }}
           UNSPLASH_KEY: ${{ secrets.UNSPLASH_ACCESS_KEY }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
 
       - run: |
           git config user.name "blog-bot"
