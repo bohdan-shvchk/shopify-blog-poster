@@ -326,3 +326,230 @@ Migration: скрипт що бере існуючий `published_slugs.json` і
 | 4 | GH timeout 360 | Не починалось |
 | 5 | Pool expiry | Не починалось |
 | 5 | Save title | Buffered у Phase 1 |
+
+
+---
+
+# Як зараз працює система постингу — повний розбір (2026-05-10)
+
+Знімок стану після завершення Phase 0 (Telegram + exit(0)) і Phase 1 (Claude Haiku + read_products scope). Pipeline зелений.
+
+## Коли запускається
+
+GitHub Actions, щодня **о 07:00 UTC** (cron `0 7 * * *`). Можна також руками — `workflow_dispatch`.
+
+Запускається `python poster.py --store my-store`.
+
+---
+
+## Крок 1 з 6 — Завантаження історії
+
+Файл: `stores/my-store/published_slugs.json`. Це список усіх раніше опублікованих статей. Кожен запис містить:
+- `slug` — URL-безпечна назва статті
+- `topic` — оригінальна тема (заголовок RSS або з банку)
+- `date` — дата публікації
+- `source` — звідки взяли тему (`rss` / `evergreen` / `ai_generated`)
+- `embedding` — числовий вектор з 384 чисел, який «описує» тему семантично
+
+Якщо в записі є `topic` але немає `embedding` — програма обчислює його зараз (для старих записів).
+
+---
+
+## Крок 2 з 6 — Вибір теми
+
+Тема вибирається з 4 джерел, у такому порядку:
+
+### 2.1. Google News RSS (модуль `topic_finder.py`)
+
+- Бере `niche` і `keywords` з `store_config.json`
+- Формує до 9 пошукових запитів: 5 ключових слів + `best <niche>`, `how to <niche>`, `<niche> 2026`, `<niche> guide`
+- Запитує `news.google.com/rss/search?q=...` для кожного → отримує до 8 заголовків з кожного
+- Для кожного заголовка обчислює оцінку (score):
+  - базово 1.0
+  - +0.5 за кожен дубль у різних запитах (макс +2.5) — означає що тема популярна
+  - +2.0 якщо починається з `how to`, `what is`, `best`, `top`, `why`, `vs`, `is`, `are`
+  - +1.0 якщо в заголовку 5-9 слів
+  - +0.5 якщо є `?`
+  - +0.5 якщо згадано `2026` або `2027`
+- Повертає топ-25 заголовків
+
+### 2.2. Topic Pool (модуль `topic_pool.py`)
+
+Файл `stores/my-store/topic_pool.json` — це накопичувальна черга кандидатів (макс 100). Щодня нові кандидати з RSS додаються туди:
+
+- Для кожного кандидата обчислюється embedding (вектор)
+- Кандидат **відкидається**, якщо схожий (cosine similarity ≥ 0.75) на щось, що **вже є в pool** або **вже опубліковано**
+- Унікальні додаються в pool з полями: `topic`, `score`, `found_date`, `source`, `embedding`
+- Pool сортується за score спадно
+
+Далі — **`pick_best`**: бере топ-кандидата з pool, який не дублює нічого опублікованого. Якщо знайшов — це наша тема.
+
+### 2.3. Evergreen банк (модуль `evergreen.py`)
+
+Якщо pool пустий або всі дублі — береться список з `store_config.json` → `evergreen_topics` (зараз там 25 ручних тем типу «How LED light therapy actually works on skin»).
+
+Програма перевіряє кожну тему на семантичну схожість з опублікованими, бере першу неопубліковану.
+
+### 2.4. AI генерація (запасний варіант)
+
+Якщо й evergreen вичерпано — Claude Haiku генерує 20 нових тем. Промпт каже Claude:
+- ніша + аудиторія з конфігу
+- список останніх 30 опублікованих тем (щоб уникати)
+- 10 категорій шаблонів (how-to, comparison, science, history, myths debunked, buyer's guide, ingredient deep-dive, seasonal, FAQ-style, checklist)
+- довжина 60-80 символів, без клікбейту, без вигаданих брендів
+
+Перша тема, що не є дублем опублікованого, — наша.
+
+Якщо всі 4 джерела впали — Telegram-повідомлення «No safe topic found», `exit(0)` (м'який пропуск).
+
+---
+
+## Крок 3 з 6 — Каталог товарів (модуль `products.py`)
+
+- Перевіряє кеш `stores/my-store/products_cache.json`. Якщо молодший за 24 години — використовує його
+- Інакше робить GraphQL запит до Shopify Admin API:
+  ```
+  query { products(first: 50, query: "status:active") { edges { node { title handle description productType tags } } } }
+  ```
+- Пагінація по 50, до 20 сторінок (= 1000 товарів максимум)
+- Обрізає опис до 300 символів
+- Зберігає в кеш
+
+Якщо запит впав (наприклад, токен втратив scope) — `WARN` у лог, Telegram-повідомлення, каталог = пустий, стаття пишеться без посилань.
+
+Зараз 19 активних товарів.
+
+---
+
+## Крок 4 з 6 — Генерація статті (модуль `generator.py` + quality gate)
+
+### 4.1. Промпт до Claude Haiku 4.5
+
+System prompt (правила):
+- Не вигадувати назви брендів, моделей, SKU
+- Не вигадувати статистику, цитати, дослідження
+- Згадувати тільки ті товари, що в каталозі (по `handle`/URL)
+- Цитувати 2-3 надійних зовнішніх джерела в кінці (FDA, журнали)
+- Повертати чистий JSON без markdown
+
+User prompt (контекст):
+- ніша, тема, аудиторія, тон, мова, ім'я+біо автора
+- весь каталог товарів (топ 30, формат `- Title | URL | description`)
+- список останніх 15 опублікованих тем
+
+User prompt (структура статті):
+- Hook-параграф (від першої особи)
+- «What you'll learn»
+- 3-5 секцій `<h2>` з `<h3>` де треба
+- 2-3 внутрішніх посилання `<a href>` ТІЛЬКИ на URL з каталогу
+- FAQ секція з 3-5 питаннями
+- Sources секція з 2-3 зовнішніми посиланнями
+- Довжина 900-1400 слів
+- Семантичний HTML
+
+Очікуваний JSON: `{"title": "...", "meta_description": "...", "tags": [...], "html_body": "..."}`
+
+Налаштування виклику: модель `claude-haiku-4-5-20251001`, `max_tokens=8192`.
+
+### 4.2. Парсинг відповіді
+
+Витягує JSON з тексту (видаляє можливі markdown-fences і керуючі символи).
+
+### 4.3. Quality gate (модуль `quality.py`)
+
+Перевіряє згенеровану статтю на 4 умови:
+1. **Hallucinated products**: бере всі `<a href="...">` з тексту, шукає в них шлях `/products/<handle>`. Кожен handle має існувати в каталозі. Якщо хоч один вигаданий — fail.
+2. **Length**: знімає HTML-теги, рахує слова. Має бути ≥ 600. (У git log є комміт що знижував до 350 — але в коді зараз 600.)
+3. **Title**: існує і ≤ 80 символів.
+4. **Meta description**: існує.
+
+### 4.4. Retry
+
+Якщо quality gate провалив — генеруємо знову. Усього **3 спроби** (1 + 2 retry). Якщо всі 3 провалились — Telegram-повідомлення з причинами, `exit(0)`.
+
+---
+
+## Крок 5 з 6 — Зображення (модуль `image_fetcher.py`)
+
+Pexels API (єдине джерело):
+- **Cover** (1 картинка): пошук за темою статті, page 1
+- Якщо порожньо — пошук за `image_query` з конфігу (зараз `woman skincare beauty`), page 1
+- **Inline** (2 картинки): пошук за темою, page 2 (інша сторінка щоб не дублювати cover)
+- Якщо порожньо — fallback за загальним запитом, page 2
+
+Результат — 1 cover + до 2 inline.
+
+Inline вставляються в HTML після 1-го і 2-го `<h2>`. Alt-текст = текст того `<h2>` (обрізаний до 120 символів). Стилі: `width:100%; border-radius:8px; margin:16px 0;`.
+
+---
+
+## Крок 6 з 6 — Публікація (модуль `publisher.py`)
+
+### 6.1. Декорування HTML
+
+До тіла статті додається:
+- На початку — `<script type="application/ld+json">` з schema.org Article (headline, description, datePublished, author, publisher, image)
+- В кінці — блок `<div class="author-bio">` з ім'ям автора та біо з конфігу
+
+### 6.2. GraphQL мутація `articleCreate`
+
+POST на `https://fheegt-kv.myshopify.com/admin/api/2024-10/graphql.json` з:
+- `blogId` з конфігу
+- `title`, `body` (декорований HTML), `tags`
+- `author.name` з конфігу
+- `image.url` (cover з Pexels)
+- `metafields.seo.description` (meta description)
+
+Стаття створюється і відразу публічна.
+
+### 6.3. Запис в історію
+
+В `published_slugs.json` додається новий запис: slug, topic, today's date, source, embedding. Тема видаляється з topic_pool.
+
+### 6.4. Telegram
+
+`[Shopify] Published: <title>` у твій бот.
+
+---
+
+## Що відбувається після poster.py (workflow YAML)
+
+Якщо в `stores/` щось змінилось (а воно міняється — `published_slugs.json` і `topic_pool.json` оновились):
+- Git commit як `blog-bot`, повідомлення `log: published blog post YYYY-MM-DD`
+- Push у main
+
+---
+
+## Які зовнішні сервіси задіяні
+
+| Сервіс | Що робить | Як автентифікується |
+|---|---|---|
+| Anthropic API | генерує статті та evergreen-теми | `ANTHROPIC_API_KEY` |
+| Shopify Admin GraphQL | читає товари, публікує статті | `SHOPIFY_TOKEN` (scopes: `read_content`, `write_content`, `read_products`) |
+| Pexels API | завантажує картинки | `PEXELS_KEY` |
+| Google News RSS | дає кандидатів-теми | без ключа |
+| Telegram Bot API | сповіщення | `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID` |
+
+---
+
+## Усі файли стану
+
+| Файл | Що в ньому |
+|---|---|
+| `stores/my-store/store_config.json` | конфіг магазину (ніша, ключові слова, автор, evergreen-банк) |
+| `stores/my-store/published_slugs.json` | історія всіх опублікованих статей з embeddings |
+| `stores/my-store/topic_pool.json` | черга кандидатів-тем (макс 100) |
+| `stores/my-store/products_cache.json` | кеш товарів зі Shopify (TTL 24 години) |
+
+---
+
+## Сценарії помилок
+
+| Що сталось | Що робить програма |
+|---|---|
+| Тему не знайдено | Telegram + `exit(0)` (не червоний run) |
+| Shopify products query впав | WARN + Telegram, каталог пустий, стаття далі генерується |
+| Quality gate провалив 3 рази | Telegram + `exit(0)` |
+| Claude повернув битий JSON | Telegram + `exit(0)` |
+| Будь-яка інша помилка (мережа, токен) | `exit(1)` (червоний run у GitHub Actions) |
+

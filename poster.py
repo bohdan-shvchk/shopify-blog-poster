@@ -7,7 +7,7 @@ import urllib.request
 from datetime import date
 from pathlib import Path
 
-from modules import dedup, evergreen, products, quality, topic_finder, topic_pool
+from modules import conflict, dedup, evergreen, products, quality, topic_finder, topic_pool
 from modules.generator import generate_article
 from modules.image_fetcher import fetch_images, inject_images_into_html
 from modules.publisher import publish_article
@@ -106,12 +106,22 @@ def select_topic(store_path: Path, config: dict, pub_embeddings: list, pub_topic
     return None
 
 
-def generate_with_quality_gate(topic: str, config: dict, catalog: list, pub_topics: list) -> dict:
+def generate_with_quality_gate(
+    topic: str,
+    config: dict,
+    catalog: list,
+    pub_topics: list,
+    relationship: dict | None = None,
+) -> dict:
     catalog_text = products.format_for_prompt(catalog, config) if catalog else ""
     last_reasons = []
     for attempt in range(_MAX_GENERATION_RETRIES + 1):
-        article = generate_article(topic, config, catalog_text, pub_topics)
-        ok, reasons = quality.validate_article(article, catalog)
+        article = generate_article(topic, config, catalog_text, pub_topics, relationship=relationship)
+        ok, reasons, warnings = quality.validate_article(article, catalog)
+        if warnings:
+            for w in warnings:
+                print(f"       WARN: {w}")
+            send_telegram(f"Quality warnings for '{topic}':\n" + "\n".join(f"- {w}" for w in warnings))
         if ok:
             return article
         last_reasons = reasons
@@ -161,9 +171,18 @@ def main():
         catalog = []
     print(f"      {len(catalog)} active products available for grounding")
 
+    print("[3.5/6] Classifying topic relationship to recent posts...")
+    recent_topics_newest_first = list(reversed(pub_topics))
+    try:
+        relationship = conflict.classify(topic, recent_topics_newest_first, n=5)
+    except Exception as e:
+        print(f"      WARN: classifier failed: {e} (treating as NEW)")
+        relationship = {"relationship": "NEW", "related_topic": None, "rationale": str(e)}
+    print(f"      Relationship: {relationship['relationship']} — {relationship['rationale']}")
+
     print("[4/6] Generating article (with quality gate)...")
     try:
-        article = generate_with_quality_gate(topic, config, catalog, pub_topics)
+        article = generate_with_quality_gate(topic, config, catalog, pub_topics, relationship=relationship)
     except (RuntimeError, json.JSONDecodeError) as e:
         print(f"ERROR: {e}")
         send_telegram(f"Generation failed for topic: {topic}\n{type(e).__name__}: {e}")

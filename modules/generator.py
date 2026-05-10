@@ -47,7 +47,7 @@ Required structure:
 - A "Sources" section at the end with 2-3 external citations as a <ul><li><a href="...">...</a></li></ul>
 
 Length: 900-1400 words. Use semantic HTML (<h2>, <h3>, <p>, <ul>, <li>, <a>).
-
+{relationship_block}
 Return ONLY this exact JSON shape:
 {{
   "title": "SEO-optimized title, max 60 chars",
@@ -71,10 +71,38 @@ def _parse_json_response(raw: str) -> dict:
     return json.loads(raw.strip())
 
 
-def generate_article(topic: str, config: dict, product_catalog_text: str, published_topics: list[str]) -> dict:
+def _relationship_block(relationship: dict | None) -> str:
+    if not relationship:
+        return ""
+    rel = relationship.get("relationship")
+    related = relationship.get("related_topic")
+    if rel == "CONTINUATION" and related:
+        return (
+            "\nRELATIONSHIP TO PRIOR CONTENT — CONTINUATION:\n"
+            f"This post is a follow-up to a recent article titled: \"{related}\".\n"
+            "In the hook paragraph, naturally reference that prior post (e.g., \"In our recent article on …\")"
+            " and frame this one as the next logical step. Build deeper, do NOT rehash.\n"
+        )
+    if rel == "FORCED" and related:
+        return (
+            "\nRELATIONSHIP TO PRIOR CONTENT — DIFFERENTIATE:\n"
+            f"We have already published an article titled: \"{related}\".\n"
+            "Acknowledge the overlap briefly in the hook (e.g., \"While we've previously covered …\")"
+            " and then take a clearly different angle — do NOT repeat the same advice.\n"
+        )
+    return ""
+
+
+def generate_article(
+    topic: str,
+    config: dict,
+    product_catalog_text: str,
+    published_topics: list[str],
+    relationship: dict | None = None,
+) -> dict:
     client = Anthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
 
-    published_sample = "\n".join(f"- {t}" for t in published_topics[-15:]) or "- (none yet)"
+    published_sample = "\n".join(f"- {t}" for t in published_topics[-30:]) or "- (none yet)"
     catalog = product_catalog_text.strip() or "(no products available — write educational content without product links)"
 
     prompt = _USER_PROMPT.format(
@@ -87,6 +115,7 @@ def generate_article(topic: str, config: dict, product_catalog_text: str, publis
         author_bio=config.get("author_bio", "writes about consumer wellness products"),
         product_catalog=catalog,
         published_topics=published_sample,
+        relationship_block=_relationship_block(relationship),
     )
 
     response = client.messages.create(
