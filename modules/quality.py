@@ -29,6 +29,30 @@ _HEADING_PATTERN = re.compile(r"<(h[23])\b", re.IGNORECASE)
 _QUASI_ORG_PATTERN = re.compile(
     r"\b[A-Z][a-z]+(?:\s+[A-Z][a-z]+)?\s+(Labs|Institute|Foundation|University|Research Center|Clinic)\b"
 )
+_KNOWN_ORGS = {
+    "Mayo Clinic",
+    "Cleveland Clinic",
+    "Harvard University",
+    "Stanford University",
+    "Yale University",
+    "Oxford University",
+    "Cambridge University",
+    "Johns Hopkins University",
+    "Columbia University",
+    "Princeton University",
+    "Karolinska Institute",
+    "Pasteur Institute",
+    "MIT",
+    "Massachusetts Institute",
+    "American Heart Association",
+    "American Cancer Society",
+    "Cancer Research Foundation",
+    "World Health Organization",
+    "Skin Cancer Foundation",
+    "National Eczema Foundation",
+    "British Skin Foundation",
+    "Wellcome Foundation",
+}
 
 
 _STYLE_MIN_H2 = {
@@ -121,7 +145,7 @@ def collect_warnings(html: str) -> list[str]:
     long_quotes = _LONG_QUOTE_PATTERN.findall(html)
     if long_quotes:
         warnings.append(f"contains {len(long_quotes)} long direct quotes — verify they are not fabricated")
-    quasi_orgs = sorted({m.group(0) for m in _QUASI_ORG_PATTERN.finditer(html)})
+    quasi_orgs = sorted({m.group(0) for m in _QUASI_ORG_PATTERN.finditer(html)} - _KNOWN_ORGS)
     if quasi_orgs:
         warnings.append(f"mentions quasi-organizations — verify they exist: {quasi_orgs[:5]}")
     return warnings
