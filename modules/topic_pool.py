@@ -24,6 +24,23 @@ from modules import dedup
 
 _POOL_FILE = "topic_pool.json"
 _MAX_POOL_SIZE = 100
+_MAX_AGE_DAYS = 60
+_DECAY_PER_DAY = 0.05
+
+
+def _days_since(iso_date: str) -> int:
+    try:
+        return max(0, (date.today() - date.fromisoformat(iso_date)).days)
+    except (ValueError, TypeError):
+        return 0
+
+
+def _effective_score(item: dict) -> float:
+    return float(item.get("score", 1.0)) - _DECAY_PER_DAY * _days_since(item.get("found_date", ""))
+
+
+def _prune_expired(pool: list[dict]) -> list[dict]:
+    return [item for item in pool if _days_since(item.get("found_date", "")) <= _MAX_AGE_DAYS]
 
 
 def _path(store_path: Path) -> Path:
@@ -51,8 +68,9 @@ def add_candidates(
 ) -> int:
     """Append new candidates that are not semantic duplicates of pool or published.
     Each candidate dict must have keys: topic, score, source.
-    Embeddings are computed here. Returns number of items added."""
-    pool = load(store_path)
+    Embeddings are computed here. Returns number of items added.
+    Also prunes pool entries older than _MAX_AGE_DAYS."""
+    pool = _prune_expired(load(store_path))
     pool_embeddings = [item["embedding"] for item in pool]
     today = date.today().isoformat()
     added = 0
@@ -76,7 +94,7 @@ def add_candidates(
         pool_embeddings.append(emb)
         added += 1
 
-    pool.sort(key=lambda x: (x["score"], x["found_date"]), reverse=True)
+    pool.sort(key=lambda x: (_effective_score(x), x["found_date"]), reverse=True)
     if len(pool) > _MAX_POOL_SIZE:
         pool = pool[:_MAX_POOL_SIZE]
 
@@ -90,9 +108,10 @@ def pick_best(
     similarity_threshold: float = 0.75,
 ):
     """Return the highest-scoring pool item that is not a duplicate of published.
+    Score is decayed by age so fresh topics float up over time.
     Returns None if pool is empty or every item is a duplicate."""
-    pool = load(store_path)
-    pool.sort(key=lambda x: x["score"], reverse=True)
+    pool = _prune_expired(load(store_path))
+    pool.sort(key=_effective_score, reverse=True)
     for item in pool:
         if not published_embeddings:
             return item

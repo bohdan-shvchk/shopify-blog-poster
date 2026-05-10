@@ -23,6 +23,22 @@ _PRODUCT_PATH = re.compile(r"/products/([a-z0-9\-]+)", re.IGNORECASE)
 _STAT_PATTERN = re.compile(r"\b\d{1,3}(?:\.\d+)?\s?%")
 _EXPERT_PATTERN = re.compile(r"\bDr\.?\s+[A-Z][a-z]+(?:\s+[A-Z][a-z]+)?", re.UNICODE)
 _LONG_QUOTE_PATTERN = re.compile(r'"([^"]{80,})"')
+_H2_PATTERN = re.compile(r"<h2\b", re.IGNORECASE)
+_H3_PATTERN = re.compile(r"<h3\b", re.IGNORECASE)
+_HEADING_PATTERN = re.compile(r"<(h[23])\b", re.IGNORECASE)
+_QUASI_ORG_PATTERN = re.compile(
+    r"\b[A-Z][a-z]+(?:\s+[A-Z][a-z]+)?\s+(Labs|Institute|Foundation|University|Research Center|Clinic)\b"
+)
+
+
+_STYLE_MIN_H2 = {
+    "how_to": 4,
+    "comparison": 4,
+    "buyers_guide": 4,
+    "deep_dive": 5,
+    "myth_busting": 4,
+    "quick_tips": 6,
+}
 
 
 def extract_product_handles(html: str) -> list[str]:
@@ -71,6 +87,28 @@ def _check_external_urls(html: str) -> list[str]:
     return broken
 
 
+def validate_structure(html: str, style_key: str | None) -> list[str]:
+    """Hard structural checks. Returns list of failure reasons."""
+    reasons = []
+    h2_count = len(_H2_PATTERN.findall(html))
+    if style_key:
+        min_h2 = _STYLE_MIN_H2.get(style_key, 4)
+        if h2_count < min_h2:
+            reasons.append(f"too few H2 sections for style '{style_key}': {h2_count} < {min_h2}")
+
+    # Heading hierarchy: every <h3> must be preceded by an <h2> at some point earlier.
+    seen_h2 = False
+    for m in _HEADING_PATTERN.finditer(html):
+        tag = m.group(1).lower()
+        if tag == "h2":
+            seen_h2 = True
+        elif tag == "h3" and not seen_h2:
+            reasons.append("H3 appears before any H2 — broken heading hierarchy")
+            break
+
+    return reasons
+
+
 def collect_warnings(html: str) -> list[str]:
     """Soft signals — logged but do not fail the gate."""
     warnings = []
@@ -83,10 +121,18 @@ def collect_warnings(html: str) -> list[str]:
     long_quotes = _LONG_QUOTE_PATTERN.findall(html)
     if long_quotes:
         warnings.append(f"contains {len(long_quotes)} long direct quotes — verify they are not fabricated")
+    quasi_orgs = sorted({m.group(0) for m in _QUASI_ORG_PATTERN.finditer(html)})
+    if quasi_orgs:
+        warnings.append(f"mentions quasi-organizations — verify they exist: {quasi_orgs[:5]}")
     return warnings
 
 
-def validate_article(article: dict, catalog: list[dict], check_urls: bool = True) -> tuple[bool, list[str], list[str]]:
+def validate_article(
+    article: dict,
+    catalog: list[dict],
+    check_urls: bool = True,
+    style_key: str | None = None,
+) -> tuple[bool, list[str], list[str]]:
     """Run all gates. Returns (ok, hard_reasons, soft_warnings)."""
     reasons = []
     html = article.get("html_body", "")
@@ -110,6 +156,8 @@ def validate_article(article: dict, catalog: list[dict], check_urls: bool = True
         reasons.append("meta_description missing")
     elif len(meta) > 160:
         reasons.append(f"meta_description too long: {len(meta)} chars (max 160)")
+
+    reasons.extend(validate_structure(html, style_key))
 
     if check_urls:
         broken = _check_external_urls(html)

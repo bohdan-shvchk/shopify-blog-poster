@@ -114,11 +114,12 @@ STYLES = {
 
 
 _RULES = [
-    (re.compile(r"\b(how to|how do|step[- ]by[- ]step|tutorial|diy)\b", re.I), "how_to"),
-    (re.compile(r"\b(vs\.?|versus|or|compared to|comparison|which is better)\b", re.I), "comparison"),
-    (re.compile(r"\b(best|top \d+|ultimate guide|buyer'?s? guide|buying guide)\b", re.I), "buyers_guide"),
-    (re.compile(r"\b(myth|myths|debunk|truth about|facts vs|misconception)\b", re.I), "myth_busting"),
-    (re.compile(r"\b(tips|hacks|tricks|ways to|things you|secrets)\b", re.I), "quick_tips"),
+    # Myth-busting first because "the truth about X" / "X debunked" can also match other patterns.
+    (re.compile(r"\b(myth|myths|debunk|debunked|truth about|facts vs|misconception|misconceptions|busted|wrong about)\b", re.I), "myth_busting"),
+    (re.compile(r"\b(how to|how do|step[- ]by[- ]step|tutorial|diy|guide to (?:applying|using|making|building|setting))\b", re.I), "how_to"),
+    (re.compile(r"\b(vs\.?|versus|compared to|comparison|which is better|or which|head[- ]to[- ]head)\b", re.I), "comparison"),
+    (re.compile(r"\b(best|top \d+|ultimate guide|buyer'?s? guide|buying guide|what to look for|shopping for)\b", re.I), "buyers_guide"),
+    (re.compile(r"\b(tips|hacks|tricks|ways to|things you|secrets|secret of|reasons (?:why|to)|quick wins)\b", re.I), "quick_tips"),
 ]
 
 

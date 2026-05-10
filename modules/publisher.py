@@ -1,8 +1,22 @@
+from __future__ import annotations
+
 import json
 import os
+import re
 from datetime import date
 
 import requests
+
+
+_FAQ_SECTION_PATTERN = re.compile(
+    r"<h2[^>]*>\s*FAQ[s]?\b.*?</h2>(.*?)(?=<h2|\Z)",
+    re.IGNORECASE | re.DOTALL,
+)
+_FAQ_QA_PATTERN = re.compile(
+    r"<h3[^>]*>(.*?)</h3>(.*?)(?=<h3|\Z)",
+    re.IGNORECASE | re.DOTALL,
+)
+_TAG_STRIP = re.compile(r"<[^>]+>")
 
 
 _ARTICLE_CREATE = """
@@ -13,6 +27,7 @@ mutation articleCreate($article: ArticleCreateInput!) {
       title
       handle
       publishedAt
+      blog { handle }
     }
     userErrors {
       field
@@ -21,6 +36,33 @@ mutation articleCreate($article: ArticleCreateInput!) {
   }
 }
 """
+
+_BLOG_HANDLE_QUERY = """
+query BlogHandle($id: ID!) {
+  blog(id: $id) { handle }
+}
+"""
+
+_blog_handle_cache: dict[str, str] = {}
+
+
+def _fetch_blog_handle(domain: str, blog_id: str, token: str) -> str | None:
+    if blog_id in _blog_handle_cache:
+        return _blog_handle_cache[blog_id]
+    try:
+        resp = requests.post(
+            f"https://{domain}/admin/api/2024-10/graphql.json",
+            json={"query": _BLOG_HANDLE_QUERY, "variables": {"id": blog_id}},
+            headers={"X-Shopify-Access-Token": token, "Content-Type": "application/json"},
+            timeout=15,
+        )
+        resp.raise_for_status()
+        handle = (resp.json().get("data") or {}).get("blog", {}).get("handle")
+    except requests.RequestException:
+        handle = None
+    if handle:
+        _blog_handle_cache[blog_id] = handle
+    return handle
 
 
 def _author_bio_html(config: dict) -> str:
@@ -38,7 +80,27 @@ def _author_bio_html(config: dict) -> str:
     )
 
 
-def _schema_jsonld(article: dict, config: dict, image_url=None) -> str:
+def _word_count(html: str) -> int:
+    return len(_TAG_STRIP.sub(" ", html).split())
+
+
+def _extract_faq_pairs(html: str) -> list[tuple[str, str]]:
+    """Find <h2>FAQ</h2> ... <h3>Q</h3>A<h3>Q</h3>A ... and return (question, answer) pairs."""
+    section_match = _FAQ_SECTION_PATTERN.search(html)
+    if not section_match:
+        return []
+    section_html = section_match.group(1)
+    pairs = []
+    for q_match in _FAQ_QA_PATTERN.finditer(section_html):
+        question = _TAG_STRIP.sub("", q_match.group(1)).strip()
+        answer = _TAG_STRIP.sub(" ", q_match.group(2)).strip()
+        answer = re.sub(r"\s+", " ", answer)
+        if question and answer:
+            pairs.append((question, answer))
+    return pairs
+
+
+def _article_schema(article: dict, config: dict, image_url, article_url) -> dict:
     today = date.today().isoformat()
     publisher_name = config.get("name") or config.get("author") or ""
     author_name = config.get("author_name") or config.get("author") or "Editorial Team"
@@ -51,15 +113,48 @@ def _schema_jsonld(article: dict, config: dict, image_url=None) -> str:
         "dateModified": today,
         "author": {"@type": "Person", "name": author_name},
         "publisher": {"@type": "Organization", "name": publisher_name},
+        "wordCount": _word_count(article["html_body"]),
+        "keywords": ", ".join(article.get("tags") or []),
     }
+    if article_url:
+        payload["mainEntityOfPage"] = {"@type": "WebPage", "@id": article_url}
     if image_url:
         payload["image"] = image_url
-    return f'<script type="application/ld+json">{json.dumps(payload, ensure_ascii=False)}</script>'
+    return payload
 
 
-def _decorate_html(article: dict, config: dict, image_url=None) -> str:
+def _faq_schema(html: str) -> dict | None:
+    pairs = _extract_faq_pairs(html)
+    if not pairs:
+        return None
+    return {
+        "@context": "https://schema.org",
+        "@type": "FAQPage",
+        "mainEntity": [
+            {
+                "@type": "Question",
+                "name": q,
+                "acceptedAnswer": {"@type": "Answer", "text": a},
+            }
+            for q, a in pairs
+        ],
+    }
+
+
+def _schema_jsonld(article: dict, config: dict, image_url=None, article_url=None) -> str:
+    blocks = [_article_schema(article, config, image_url, article_url)]
+    faq = _faq_schema(article["html_body"])
+    if faq:
+        blocks.append(faq)
+    return "".join(
+        f'<script type="application/ld+json">{json.dumps(b, ensure_ascii=False)}</script>'
+        for b in blocks
+    )
+
+
+def _decorate_html(article: dict, config: dict, image_url=None, article_url=None) -> str:
     return (
-        _schema_jsonld(article, config, image_url)
+        _schema_jsonld(article, config, image_url, article_url)
         + article["html_body"]
         + _author_bio_html(config)
     )
@@ -70,7 +165,12 @@ def publish_article(article: dict, config: dict, image_url=None) -> dict:
     blog_id = config["blog_id"]
     token = os.environ["SHOPIFY_TOKEN"]
 
-    body_html = _decorate_html(article, config, image_url)
+    blog_handle = _fetch_blog_handle(domain, blog_id, token)
+    expected_slug = re.sub(r"[\s_-]+", "-", re.sub(r"[^\w\s-]", "", article["title"].lower().strip()))
+    base = (config.get("public_domain") or f"https://{domain}").rstrip("/")
+    expected_url = f"{base}/blogs/{blog_handle}/{expected_slug}" if blog_handle else None
+
+    body_html = _decorate_html(article, config, image_url, expected_url)
 
     variables = {
         "article": {
@@ -111,4 +211,8 @@ def publish_article(article: dict, config: dict, image_url=None) -> dict:
     if errors:
         raise RuntimeError(f"Shopify errors: {errors}")
 
-    return data["data"]["articleCreate"]["article"]
+    created = data["data"]["articleCreate"]["article"]
+    actual_handle = (created.get("blog") or {}).get("handle") or blog_handle
+    if actual_handle:
+        created["url"] = f"{base}/blogs/{actual_handle}/{created['handle']}"
+    return created

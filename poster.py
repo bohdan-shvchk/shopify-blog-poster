@@ -9,7 +9,7 @@ from pathlib import Path
 
 from modules import conflict, dedup, evergreen, products, quality, style, topic_finder, topic_pool
 from modules.generator import generate_article
-from modules.image_fetcher import fetch_images, inject_images_into_html
+from modules.image_fetcher import count_h2, fetch_images, inject_images_into_html
 from modules.publisher import publish_article
 
 
@@ -113,22 +113,26 @@ def generate_with_quality_gate(
     pub_topics: list,
     relationship: dict | None = None,
 ) -> dict:
-    catalog_text = products.format_for_prompt(catalog, config) if catalog else ""
+    relevant_catalog = products.rank_by_relevance(catalog, topic, top_n=15) if catalog else []
+    catalog_text = products.format_for_prompt(relevant_catalog, config) if relevant_catalog else ""
     style_order = style.ranked_styles(topic)
-    last_reasons = []
+    last_reasons: list[str] = []
     for attempt in range(_MAX_GENERATION_RETRIES + 1):
         style_key = style_order[attempt % len(style_order)]
         print(f"       attempt {attempt + 1}/{_MAX_GENERATION_RETRIES + 1} — style: {style.STYLES[style_key]['name']}")
         article = generate_article(
             topic, config, catalog_text, pub_topics,
             relationship=relationship, style_key=style_key,
+            previous_failure_reasons=last_reasons or None,
         )
-        ok, reasons, warnings = quality.validate_article(article, catalog)
+        ok, reasons, warnings = quality.validate_article(article, catalog, style_key=style_key)
         if warnings:
             for w in warnings:
                 print(f"       WARN: {w}")
             send_telegram(f"Quality warnings for '{topic}':\n" + "\n".join(f"- {w}" for w in warnings))
         if ok:
+            if attempt > 0:
+                send_telegram(f"Published after {attempt} retry(ies) for '{topic}'")
             return article
         last_reasons = reasons
         print(f"       quality check failed: {reasons}")
@@ -168,6 +172,13 @@ def main():
     topic = pick["topic"]
     print(f"      Topic: {topic}  (source: {pick['source']})")
 
+    today = date.today().isoformat()
+    if any(r.get("date") == today and r.get("topic") == topic for r in pub_records):
+        msg = f"Duplicate run today for topic: {topic}. Skipping."
+        print(f"      {msg}")
+        send_telegram(msg)
+        sys.exit(0)
+
     print("[3/6] Fetching product catalog...")
     try:
         catalog = products.get_products(store_path, config)
@@ -197,10 +208,12 @@ def main():
 
     print("[5/6] Fetching images...")
     fallback_query = config.get("image_query") or config["niche"]
-    images = fetch_images(primary_query=topic, fallback_query=fallback_query, count=3)
+    h2_count = count_h2(article["html_body"])
+    desired_count = max(3, min(6, 1 + (h2_count - 1) // 2))
+    images = fetch_images(primary_query=topic, fallback_query=fallback_query, count=desired_count)
     cover_image = images[0] if images else None
     print(f"      Cover: {cover_image or 'none'}")
-    print(f"      Inline images: {len(images[1:])}")
+    print(f"      Inline images: {len(images[1:])} (across {h2_count} H2 sections)")
     if images[1:]:
         article["html_body"] = inject_images_into_html(article["html_body"], images[1:], topic=topic)
 
@@ -212,18 +225,24 @@ def main():
     print("[6/6] Publishing to Shopify...")
     result = publish_article(article, config, cover_image)
     print(f"      Published: {result['handle']} (id: {result['id']})")
+    if result.get("url"):
+        print(f"      URL: {result['url']}")
 
     slug = slugify(article["title"])
     pub_records.append({
         "slug": slug,
+        "title": article["title"],
         "topic": topic,
         "date": date.today().isoformat(),
         "source": pick["source"],
+        "article_id": result["id"],
+        "url": result.get("url"),
+        "handle": result["handle"],
         "embedding": pick["embedding"],
     })
     save_published(store_path, pub_records)
     topic_pool.remove(store_path, topic)
-    send_telegram(f"Published: {article['title']}")
+    send_telegram(f"Published: {article['title']}\n{result.get('url') or ''}".strip())
     print(f"      Slug saved: {slug}")
     print("\nDone.")
 

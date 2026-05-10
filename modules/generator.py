@@ -37,7 +37,7 @@ PRODUCT CATALOG (the ONLY products you may mention by name or link):
 
 Already-published topics (avoid overlap, do not rehash):
 {published_topics}
-{style_block}
+{style_block}{previous_failure_block}
 Universal rules (apply on top of the format above):
 - Use semantic HTML only: <h2>, <h3>, <p>, <ul>, <li>, <a>. Never use <h1>.
 - Inside the body: 2-3 internal links using <a href="..."> tags pointing ONLY to URLs from
@@ -71,6 +71,16 @@ def _parse_json_response(raw: str) -> dict:
     return json.loads(raw.strip())
 
 
+def _previous_failure_block(reasons: list[str] | None) -> str:
+    if not reasons:
+        return ""
+    bullets = "\n".join(f"- {r}" for r in reasons)
+    return (
+        "\nPREVIOUS ATTEMPT FAILED quality validation. Fix specifically these issues this time:\n"
+        f"{bullets}\n"
+    )
+
+
 def _relationship_block(relationship: dict | None) -> str:
     if not relationship:
         return ""
@@ -100,6 +110,7 @@ def generate_article(
     published_topics: list[str],
     relationship: dict | None = None,
     style_key: str | None = None,
+    previous_failure_reasons: list[str] | None = None,
 ) -> dict:
     client = Anthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
 
@@ -119,6 +130,7 @@ def generate_article(
         published_topics=published_sample,
         relationship_block=_relationship_block(relationship),
         style_block=style_block,
+        previous_failure_block=_previous_failure_block(previous_failure_reasons),
     )
 
     response = client.messages.create(

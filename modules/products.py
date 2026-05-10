@@ -2,7 +2,10 @@
 
 Results are cached per-store in products_cache.json with a 24h TTL so we don't
 hit Shopify on every run. Returned shape is a list of dicts with keys:
-title, handle, url, description, product_type, tags.
+title, handle, url, description, product_type, tags, embedding.
+
+The embedding is built from title + description + tags + product_type so we can
+rank products by relevance to the article topic before sending to the LLM.
 """
 from __future__ import annotations
 
@@ -12,6 +15,8 @@ import time
 from pathlib import Path
 
 import requests
+
+from modules import dedup
 
 
 _CACHE_TTL_SECONDS = 24 * 60 * 60
@@ -68,21 +73,56 @@ def _fetch_all(domain: str, token: str) -> list[dict]:
     return products
 
 
+def _product_text(p: dict) -> str:
+    parts = [p.get("title", ""), p.get("product_type", ""), " ".join(p.get("tags") or []), p.get("description", "")]
+    return " ".join(filter(None, parts))
+
+
+def _ensure_embeddings(products: list[dict]) -> bool:
+    """Compute and attach embeddings for products that don't have one. Returns True if anything changed."""
+    changed = False
+    for p in products:
+        if not p.get("embedding"):
+            p["embedding"] = dedup.embed(_product_text(p))
+            changed = True
+    return changed
+
+
 def get_products(store_path: Path, config: dict, force_refresh: bool = False) -> list[dict]:
     cache_file = store_path / "products_cache.json"
     if not force_refresh and cache_file.exists():
         with open(cache_file) as f:
             cached = json.load(f)
         if time.time() - cached.get("fetched_at", 0) < _CACHE_TTL_SECONDS:
-            return cached.get("products", [])
+            products = cached.get("products", [])
+            if _ensure_embeddings(products):
+                with open(cache_file, "w") as f:
+                    json.dump({"fetched_at": cached.get("fetched_at", time.time()), "products": products}, f, indent=2, ensure_ascii=False)
+            return products
 
     domain = config["shopify_domain"]
     token = os.environ["SHOPIFY_TOKEN"]
     products = _fetch_all(domain, token)
+    _ensure_embeddings(products)
 
     with open(cache_file, "w") as f:
         json.dump({"fetched_at": time.time(), "products": products}, f, indent=2, ensure_ascii=False)
     return products
+
+
+def rank_by_relevance(products: list[dict], topic: str, top_n: int = 15) -> list[dict]:
+    """Sort products by cosine similarity of their embedding to the topic embedding.
+    Products without embeddings sink to the bottom. Returns a new list, top_n items."""
+    if not products:
+        return []
+    topic_emb = dedup.embed(topic)
+    scored = []
+    for p in products:
+        emb = p.get("embedding")
+        score = dedup.cosine(topic_emb, emb) if emb else -1.0
+        scored.append((score, p))
+    scored.sort(key=lambda x: x[0], reverse=True)
+    return [p for _, p in scored[:top_n]]
 
 
 def product_url(handle: str, config: dict) -> str:
@@ -96,8 +136,10 @@ def format_for_prompt(products: list[dict], config: dict, limit: int = 30) -> st
     for p in products[:limit]:
         url = product_url(p["handle"], config)
         desc = p["description"].replace("\n", " ").strip()
+        ptype = p.get("product_type", "")
+        meta = f" [{ptype}]" if ptype else ""
         if desc:
-            lines.append(f"- {p['title']} | {url} | {desc[:120]}")
+            lines.append(f"- {p['title']}{meta} | {url} | {desc[:120]}")
         else:
-            lines.append(f"- {p['title']} | {url}")
+            lines.append(f"- {p['title']}{meta} | {url}")
     return "\n".join(lines)
