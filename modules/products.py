@@ -47,7 +47,12 @@ def _fetch_all(domain: str, token: str) -> list[dict]:
             timeout=30,
         )
         resp.raise_for_status()
-        data = resp.json()["data"]["products"]
+        body = resp.json()
+        if body.get("errors"):
+            raise RuntimeError(f"Shopify GraphQL errors: {body['errors']}")
+        if not body.get("data") or not body["data"].get("products"):
+            raise RuntimeError(f"Unexpected Shopify response: {body}")
+        data = body["data"]["products"]
         for edge in data["edges"]:
             n = edge["node"]
             products.append({

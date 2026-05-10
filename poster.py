@@ -164,9 +164,9 @@ def main():
     print("[4/6] Generating article (with quality gate)...")
     try:
         article = generate_with_quality_gate(topic, config, catalog, pub_topics)
-    except RuntimeError as e:
+    except (RuntimeError, json.JSONDecodeError) as e:
         print(f"ERROR: {e}")
-        send_telegram(f"Quality gate failed for topic: {topic}\n{e}")
+        send_telegram(f"Generation failed for topic: {topic}\n{type(e).__name__}: {e}")
         sys.exit(0)
     print(f"      Title: {article['title']}")
 

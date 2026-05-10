@@ -91,7 +91,7 @@ def generate_article(topic: str, config: dict, product_catalog_text: str, publis
 
     response = client.messages.create(
         model=_MODEL,
-        max_tokens=4096,
+        max_tokens=8192,
         system=_SYSTEM_PROMPT,
         messages=[{"role": "user", "content": prompt}],
     )
