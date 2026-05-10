@@ -7,7 +7,7 @@ import urllib.request
 from datetime import date
 from pathlib import Path
 
-from modules import conflict, dedup, evergreen, products, quality, topic_finder, topic_pool
+from modules import conflict, dedup, evergreen, products, quality, style, topic_finder, topic_pool
 from modules.generator import generate_article
 from modules.image_fetcher import fetch_images, inject_images_into_html
 from modules.publisher import publish_article
@@ -114,9 +114,15 @@ def generate_with_quality_gate(
     relationship: dict | None = None,
 ) -> dict:
     catalog_text = products.format_for_prompt(catalog, config) if catalog else ""
+    style_order = style.ranked_styles(topic)
     last_reasons = []
     for attempt in range(_MAX_GENERATION_RETRIES + 1):
-        article = generate_article(topic, config, catalog_text, pub_topics, relationship=relationship)
+        style_key = style_order[attempt % len(style_order)]
+        print(f"       attempt {attempt + 1}/{_MAX_GENERATION_RETRIES + 1} — style: {style.STYLES[style_key]['name']}")
+        article = generate_article(
+            topic, config, catalog_text, pub_topics,
+            relationship=relationship, style_key=style_key,
+        )
         ok, reasons, warnings = quality.validate_article(article, catalog)
         if warnings:
             for w in warnings:
@@ -125,7 +131,7 @@ def generate_with_quality_gate(
         if ok:
             return article
         last_reasons = reasons
-        print(f"       quality check failed ({attempt + 1}/{_MAX_GENERATION_RETRIES + 1}): {reasons}")
+        print(f"       quality check failed: {reasons}")
     raise RuntimeError(f"Could not produce a valid article: {last_reasons}")
 
 

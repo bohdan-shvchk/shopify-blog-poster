@@ -4,6 +4,8 @@ import re
 
 from anthropic import Anthropic
 
+from . import style as style_module
+
 
 _MODEL = "claude-haiku-4-5-20251001"
 
@@ -35,18 +37,16 @@ PRODUCT CATALOG (the ONLY products you may mention by name or link):
 
 Already-published topics (avoid overlap, do not rehash):
 {published_topics}
-
-Required structure:
-- Engaging hook paragraph (personal, specific — frame as the author's perspective)
-- "What you'll learn" / problem framing
-- 3-5 H2 sections with H3 subsections where helpful
+{style_block}
+Universal rules (apply on top of the format above):
+- Use semantic HTML only: <h2>, <h3>, <p>, <ul>, <li>, <a>. Never use <h1>.
 - Inside the body: 2-3 internal links using <a href="..."> tags pointing ONLY to URLs from
   the product catalog above. Use natural anchor text. If the catalog is empty or no product
   fits, OMIT product links entirely — do NOT invent any.
-- An FAQ section with 3-5 questions (use <h2>FAQ</h2> + <h3>question</h3>)
-- A "Sources" section at the end with 2-3 external citations as a <ul><li><a href="...">...</a></li></ul>
+- The FAQ section uses <h2>FAQ</h2> with <h3> for each question.
+- The Sources section is a <ul><li><a href="...">...</a></li></ul> with 2-3 external citations.
 
-Length: 900-1400 words. Use semantic HTML (<h2>, <h3>, <p>, <ul>, <li>, <a>).
+Length: strictly 900-1400 words.
 {relationship_block}
 Return ONLY this exact JSON shape:
 {{
@@ -99,11 +99,13 @@ def generate_article(
     product_catalog_text: str,
     published_topics: list[str],
     relationship: dict | None = None,
+    style_key: str | None = None,
 ) -> dict:
     client = Anthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
 
-    published_sample = "\n".join(f"- {t}" for t in published_topics[-30:]) or "- (none yet)"
+    published_sample = "\n".join(f"- {t}" for t in published_topics) or "- (none yet)"
     catalog = product_catalog_text.strip() or "(no products available — write educational content without product links)"
+    style_block = style_module.render(style_key or style_module.pick_style(topic))
 
     prompt = _USER_PROMPT.format(
         niche=config["niche"],
@@ -116,6 +118,7 @@ def generate_article(
         product_catalog=catalog,
         published_topics=published_sample,
         relationship_block=_relationship_block(relationship),
+        style_block=style_block,
     )
 
     response = client.messages.create(
