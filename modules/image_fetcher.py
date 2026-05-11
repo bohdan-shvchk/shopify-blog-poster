@@ -30,7 +30,9 @@ def topic_to_keywords(topic: str, max_words: int = 3) -> str:
     return " ".join(words[:max_words]) or topic
 
 
-def _fetch_pexels(query: str, count: int = 1, page: int = 1) -> list:
+def _fetch_pexels(query: str, count: int = 15, page: int = 1) -> list[tuple[str, str]]:
+    """Returns [(url, alt), ...]. We fetch a larger pool than we need so the
+    LLM judge has enough candidates to pick contextually appropriate ones."""
     key = os.environ.get("PEXELS_KEY")
     if not key or count < 1:
         return []
@@ -43,7 +45,7 @@ def _fetch_pexels(query: str, count: int = 1, page: int = 1) -> list:
         )
         resp.raise_for_status()
         photos = resp.json().get("photos", [])
-        return [p["src"]["large"] for p in photos]
+        return [(p["src"]["large"], (p.get("alt") or "").strip()) for p in photos]
     except Exception:
         return []
 
@@ -62,27 +64,97 @@ def _niche_anchor(fallback_query: str, max_words: int = 2) -> str:
     return " ".join(words[:max_words])
 
 
+_JUDGE_MODEL = "claude-haiku-4-5-20251001"
+
+_JUDGE_TOOL = {
+    "name": "select_relevant_images",
+    "description": (
+        "Return the indices of images whose descriptions are contextually appropriate "
+        "as illustrations for the given article topic. Reject anything off-topic even "
+        "if a keyword overlaps (e.g. 'traffic light' for an article about 'red light therapy', "
+        "or 'car headlights' for 'LED skincare'). Empty descriptions are uncertain — "
+        "include them only if you cannot find enough clearly relevant candidates."
+    ),
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "relevant_indices": {
+                "type": "array",
+                "items": {"type": "integer"},
+                "description": "0-based indices of relevant images, ordered by relevance (most relevant first).",
+            }
+        },
+        "required": ["relevant_indices"],
+    },
+}
+
+
+def _judge_images(candidates: list[tuple[str, str]], topic: str, niche: str, min_keep: int) -> list[tuple[str, str]]:
+    """Ask Haiku which Pexels candidates are contextually appropriate.
+    Returns the filtered list in the order Haiku ranked them.
+    On API failure or no API key, returns originals (best-effort fallback)."""
+    if not candidates or not os.environ.get("ANTHROPIC_API_KEY"):
+        return candidates
+    listing = "\n".join(f"{i}: {alt or '(no description)'}" for i, (_, alt) in enumerate(candidates))
+    prompt = (
+        f"Article topic: \"{topic}\"\n"
+        f"Store niche: \"{niche}\"\n\n"
+        f"Candidate stock photos (description from photographer):\n{listing}\n\n"
+        f"Pick at least {min_keep} indices that would work as illustrations for this article. "
+        "Prefer photos that clearly show the article's subject. Reject any photo whose "
+        "description is off-topic even if it shares a keyword (e.g. traffic lights for an "
+        "article about red light therapy). Order results by relevance, most relevant first."
+    )
+    try:
+        from anthropic import Anthropic
+        client = Anthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
+        resp = client.messages.create(
+            model=_JUDGE_MODEL,
+            max_tokens=512,
+            tools=[_JUDGE_TOOL],
+            tool_choice={"type": "tool", "name": "select_relevant_images"},
+            messages=[{"role": "user", "content": prompt}],
+        )
+        for block in resp.content:
+            if getattr(block, "type", None) == "tool_use" and block.name == "select_relevant_images":
+                indices = block.input.get("relevant_indices") or []
+                kept = [candidates[i] for i in indices if 0 <= i < len(candidates)]
+                return kept or candidates
+    except Exception:
+        pass
+    return candidates
+
+
 def fetch_images(primary_query: str, fallback_query: str, count: int = 3) -> list:
-    """Try the niche-anchored topic query first, then unanchored topic keywords,
-    then the broader niche query. Anchoring forces Pexels to weigh both the topic
-    and the niche context — without it 'red light therapy' returns traffic lights.
-    Cover and inline use different pages so we never serve the same image twice."""
+    """Fetch a pool from Pexels (niche-anchored query first, then fallbacks),
+    have Haiku judge which are contextually appropriate, return the top N URLs.
+    The judge filters out photos like 'traffic light' for 'red light therapy'
+    where keyword overlap fooled Pexels' search ranking."""
     keyword_query = topic_to_keywords(primary_query)
     anchor = _niche_anchor(fallback_query)
     anchored = f"{keyword_query} {anchor}".strip() if anchor else keyword_query
 
-    cover = (
-        _fetch_pexels(anchored, 1, 1)
-        or _fetch_pexels(keyword_query, 1, 1)
-        or _fetch_pexels(fallback_query, 1, 1)
+    pool_size = max(count * 4, 12)
+    pool = (
+        _fetch_pexels(anchored, pool_size, 1)
+        or _fetch_pexels(keyword_query, pool_size, 1)
+        or _fetch_pexels(fallback_query, pool_size, 1)
     )
-    inline_n = max(0, count - 1)
-    inline = (
-        _fetch_pexels(anchored, inline_n, 2)
-        or _fetch_pexels(keyword_query, inline_n, 2)
-        or _fetch_pexels(fallback_query, inline_n, 2)
-    )
-    return cover + inline
+    if not pool:
+        return []
+
+    judged = _judge_images(pool, topic=primary_query, niche=fallback_query, min_keep=count)
+
+    seen = set()
+    out = []
+    for url, _ in judged:
+        if url in seen:
+            continue
+        seen.add(url)
+        out.append(url)
+        if len(out) >= count:
+            break
+    return out
 
 
 _BOILERPLATE_H2 = re.compile(
