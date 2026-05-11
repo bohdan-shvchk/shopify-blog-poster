@@ -75,13 +75,22 @@ def published_topics(records: list) -> list:
     return [r["topic"] for r in records if r.get("topic")]
 
 
+def _niche_embedding(config: dict) -> list:
+    """Embedding of the store's niche + keywords. Used to filter offtopic candidates."""
+    parts = [config["niche"]] + list(config.get("keywords", []))
+    return dedup.embed(". ".join(parts))
+
+
 def select_topic(store_path: Path, config: dict, pub_embeddings: list, pub_topics: list):
     """Returns dict with keys topic, source, embedding. None if nothing safe."""
     # 1. fresh RSS candidates → pool
     print("       discovering candidates from RSS...")
     candidates = topic_finder.discover_candidates(config)
-    added = topic_pool.add_candidates(store_path, candidates, pub_embeddings)
-    print(f"       added {added} new candidates to pool")
+    niche_emb = _niche_embedding(config)
+    added, rejected_offtopic = topic_pool.add_candidates(
+        store_path, candidates, pub_embeddings, niche_embedding=niche_emb,
+    )
+    print(f"       added {added} new candidates to pool ({rejected_offtopic} rejected as offtopic)")
 
     # 2. best from pool
     pick = topic_pool.pick_best(store_path, pub_embeddings)

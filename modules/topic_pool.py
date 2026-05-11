@@ -65,21 +65,30 @@ def add_candidates(
     candidates: list[dict],
     published_embeddings: list[list[float]],
     similarity_threshold: float = 0.75,
-) -> int:
-    """Append new candidates that are not semantic duplicates of pool or published.
+    niche_embedding: list[float] | None = None,
+    niche_threshold: float = 0.28,
+) -> tuple[int, int]:
+    """Append new candidates that are not semantic duplicates of pool or published,
+    and are on-topic for the store's niche.
     Each candidate dict must have keys: topic, score, source.
-    Embeddings are computed here. Returns number of items added.
+    Embeddings are computed here. Returns (added, rejected_offtopic) counts.
     Also prunes pool entries older than _MAX_AGE_DAYS."""
     pool = _prune_expired(load(store_path))
     pool_embeddings = [item["embedding"] for item in pool]
     today = date.today().isoformat()
     added = 0
+    rejected_offtopic = 0
 
     for cand in candidates:
         topic = cand["topic"].strip()
         if not topic:
             continue
         emb = dedup.embed(topic)
+        if niche_embedding is not None:
+            niche_sim = dedup.cosine(niche_embedding, emb)
+            if niche_sim < niche_threshold:
+                rejected_offtopic += 1
+                continue
         if pool_embeddings and dedup.find_most_similar(emb, pool_embeddings)[1] >= similarity_threshold:
             continue
         if published_embeddings and dedup.find_most_similar(emb, published_embeddings)[1] >= similarity_threshold:
@@ -99,7 +108,7 @@ def add_candidates(
         pool = pool[:_MAX_POOL_SIZE]
 
     save(store_path, pool)
-    return added
+    return added, rejected_offtopic
 
 
 def pick_best(
