@@ -23,9 +23,18 @@
   "tone": "warm, empowering and informative",
   "image_query": "woman skincare beauty",
   "internal_links": [
-    {"anchor": "LED Facial Sculptor", "url": "https://lunara-light.com/products/lunaralight-7-in-1-led-facial-sculptor-travel-case"},
-    {"anchor": "Mini Hair Removal Device", "url": "https://lunara-light.com/products/lunara-light-mini-home-hair-removal-device"},
-    {"anchor": "shop all devices", "url": "https://lunara-light.com/collections/all"}
+    {
+      "anchor": "LED Facial Sculptor",
+      "url": "https://lunara-light.com/products/lunaralight-7-in-1-led-facial-sculptor-travel-case"
+    },
+    {
+      "anchor": "Mini Hair Removal Device",
+      "url": "https://lunara-light.com/products/lunara-light-mini-home-hair-removal-device"
+    },
+    {
+      "anchor": "shop all devices",
+      "url": "https://lunara-light.com/collections/all"
+    }
   ],
   "evergreen_topics": [
     "How LED light therapy actually works on skin: the science explained",
@@ -53,5 +62,6 @@
     "Red light therapy for hair growth: what the research really says",
     "Menopause skin changes and at-home device strategies",
     "Sun damage repair at home: realistic expectations from LED therapy"
-  ]
+  ],
+  "blog_handle": "news"
 }
