@@ -17,6 +17,8 @@ import re
 
 from anthropic import Anthropic
 
+from .generator import _create_with_backoff
+
 
 _MODEL = "claude-haiku-4-5-20251001"
 
@@ -52,7 +54,8 @@ def classify(topic: str, recent_topics: list[str], n: int = 5) -> dict:
     recent_lines = "\n".join(f"{i}. {t}" for i, t in enumerate(sample))
 
     client = Anthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
-    response = client.messages.create(
+    response = _create_with_backoff(
+        client,
         model=_MODEL,
         max_tokens=300,
         system="You classify topic relationships precisely. Return strict JSON only.",

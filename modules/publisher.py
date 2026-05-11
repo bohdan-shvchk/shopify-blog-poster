@@ -7,9 +7,11 @@ from datetime import date
 
 import requests
 
+from .slug import slugify
+
 
 _FAQ_SECTION_PATTERN = re.compile(
-    r"<h2[^>]*>\s*FAQ[s]?\b.*?</h2>(.*?)(?=<h2|\Z)",
+    r"<h2[^>]*>\s*(?:FAQ[s]?|Frequently\s+Asked\s+Questions|Questions\s*(?:&|&amp;|and)\s*Answers|Common\s+Questions)\b.*?</h2>(.*?)(?=<h2|\Z)",
     re.IGNORECASE | re.DOTALL,
 )
 _FAQ_QA_PATTERN = re.compile(
@@ -17,6 +19,10 @@ _FAQ_QA_PATTERN = re.compile(
     re.IGNORECASE | re.DOTALL,
 )
 _TAG_STRIP = re.compile(r"<[^>]+>")
+_PRODUCT_LINK_PATTERN = re.compile(
+    r'<a\s[^>]*href=["\'][^"\']*?/products/([a-z0-9\-]+)[^"\']*["\'][^>]*>(.*?)</a>',
+    re.IGNORECASE | re.DOTALL,
+)
 
 
 _ARTICLE_CREATE = """
@@ -123,6 +129,35 @@ def _article_schema(article: dict, config: dict, image_url, article_url) -> dict
     return payload
 
 
+def _extract_product_handles(html: str) -> list[str]:
+    """Return product handles in order of first appearance, deduplicated."""
+    seen: dict[str, None] = {}
+    for m in _PRODUCT_LINK_PATTERN.finditer(html):
+        seen.setdefault(m.group(1).lower(), None)
+    return list(seen.keys())
+
+
+def _product_schemas(html: str, catalog: list[dict] | None, base: str) -> list[dict]:
+    """Build a Product schema per catalog product mentioned in the article body.
+    Anchor text is unreliable, so name/url come from the catalog. Price is
+    intentionally omitted — we don't fetch it and refuse to fabricate a value."""
+    if not catalog:
+        return []
+    by_handle = {p["handle"].lower(): p for p in catalog}
+    schemas = []
+    for handle in _extract_product_handles(html):
+        product = by_handle.get(handle)
+        if not product:
+            continue
+        schemas.append({
+            "@context": "https://schema.org",
+            "@type": "Product",
+            "name": product["title"],
+            "url": f"{base}/products/{handle}",
+        })
+    return schemas
+
+
 def _faq_schema(html: str) -> dict | None:
     pairs = _extract_faq_pairs(html)
     if not pairs:
@@ -141,36 +176,40 @@ def _faq_schema(html: str) -> dict | None:
     }
 
 
-def _schema_jsonld(article: dict, config: dict, image_url=None, article_url=None) -> str:
+def _schema_jsonld(article: dict, config: dict, image_url=None, article_url=None, catalog=None, base=None) -> str:
     blocks = [_article_schema(article, config, image_url, article_url)]
     faq = _faq_schema(article["html_body"])
     if faq:
         blocks.append(faq)
+    if catalog and base:
+        blocks.extend(_product_schemas(article["html_body"], catalog, base))
     return "".join(
         f'<script type="application/ld+json">{json.dumps(b, ensure_ascii=False)}</script>'
         for b in blocks
     )
 
 
-def _decorate_html(article: dict, config: dict, image_url=None, article_url=None) -> str:
+def _decorate_html(article: dict, config: dict, image_url=None, article_url=None, catalog=None, base=None) -> str:
     return (
-        _schema_jsonld(article, config, image_url, article_url)
+        _schema_jsonld(article, config, image_url, article_url, catalog, base)
         + article["html_body"]
         + _author_bio_html(config)
     )
 
 
-def publish_article(article: dict, config: dict, image_url=None) -> dict:
+def publish_article(article: dict, config: dict, image_url=None, catalog: list[dict] | None = None) -> dict:
     domain = config["shopify_domain"]
     blog_id = config["blog_id"]
     token = os.environ["SHOPIFY_TOKEN"]
 
-    blog_handle = _fetch_blog_handle(domain, blog_id, token)
-    expected_slug = re.sub(r"[\s_-]+", "-", re.sub(r"[^\w\s-]", "", article["title"].lower().strip()))
+    blog_handle = config.get("blog_handle") or _fetch_blog_handle(domain, blog_id, token)
+    if blog_handle and not config.get("blog_handle"):
+        config["blog_handle"] = blog_handle  # caller saves config back to disk
+    expected_slug = slugify(article["title"])
     base = (config.get("public_domain") or f"https://{domain}").rstrip("/")
     expected_url = f"{base}/blogs/{blog_handle}/{expected_slug}" if blog_handle else None
 
-    body_html = _decorate_html(article, config, image_url, expected_url)
+    body_html = _decorate_html(article, config, image_url, expected_url, catalog, base)
 
     variables = {
         "article": {

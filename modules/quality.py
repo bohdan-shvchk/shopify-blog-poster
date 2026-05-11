@@ -14,8 +14,11 @@ Soft warnings (logged + Telegram, do not fail the gate):
 from __future__ import annotations
 
 import re
+from concurrent.futures import ThreadPoolExecutor
 
 import requests
+
+from . import style
 
 
 _HREF_PATTERN = re.compile(r'href=["\']([^"\']+)["\']', re.IGNORECASE)
@@ -55,16 +58,6 @@ _KNOWN_ORGS = {
 }
 
 
-_STYLE_MIN_H2 = {
-    "how_to": 4,
-    "comparison": 4,
-    "buyers_guide": 4,
-    "deep_dive": 5,
-    "myth_busting": 4,
-    "quick_tips": 6,
-}
-
-
 def extract_product_handles(html: str) -> list[str]:
     handles = []
     for href in _HREF_PATTERN.findall(html):
@@ -95,20 +88,33 @@ def validate_length(html: str, min_words: int = 800) -> tuple[bool, int]:
     return (words >= min_words, words)
 
 
-def _check_external_urls(html: str) -> list[str]:
-    """HEAD each external URL. Return list of URLs that returned 4xx/5xx or failed.
-    A url that times out or returns connection error is treated as broken."""
-    broken = []
-    for url in extract_external_urls(html):
+def _probe_url(url: str) -> str | None:
+    """Returns failure description if the URL is broken, else None.
+    Some sites (notably Cloudflare-fronted) reject HEAD with 403/405 but accept GET,
+    so a HEAD failure falls back to a streamed GET before we declare it broken."""
+    try:
+        resp = requests.head(url, timeout=5, allow_redirects=True)
+        if resp.status_code < 400:
+            return None
+        resp = requests.get(url, timeout=5, allow_redirects=True, stream=True)
         try:
-            resp = requests.head(url, timeout=5, allow_redirects=True)
             if resp.status_code >= 400:
-                resp = requests.get(url, timeout=5, allow_redirects=True, stream=True)
-                if resp.status_code >= 400:
-                    broken.append(f"{url} ({resp.status_code})")
-        except requests.RequestException as e:
-            broken.append(f"{url} ({type(e).__name__})")
-    return broken
+                return f"{url} ({resp.status_code})"
+        finally:
+            resp.close()
+        return None
+    except requests.RequestException as e:
+        return f"{url} ({type(e).__name__})"
+
+
+def _check_external_urls(html: str) -> list[str]:
+    """HEAD each external URL in parallel. Return list of broken URLs."""
+    urls = extract_external_urls(html)
+    if not urls:
+        return []
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        results = pool.map(_probe_url, urls)
+    return [r for r in results if r]
 
 
 def validate_structure(html: str, style_key: str | None) -> list[str]:
@@ -116,9 +122,9 @@ def validate_structure(html: str, style_key: str | None) -> list[str]:
     reasons = []
     h2_count = len(_H2_PATTERN.findall(html))
     if style_key:
-        min_h2 = _STYLE_MIN_H2.get(style_key, 4)
-        if h2_count < min_h2:
-            reasons.append(f"too few H2 sections for style '{style_key}': {h2_count} < {min_h2}")
+        required = style.min_h2(style_key)
+        if h2_count < required:
+            reasons.append(f"too few H2 sections for style '{style_key}': {h2_count} < {required}")
 
     # Heading hierarchy: every <h3> must be preceded by an <h2> at some point earlier.
     seen_h2 = False
@@ -149,6 +155,13 @@ def collect_warnings(html: str) -> list[str]:
     if quasi_orgs:
         warnings.append(f"mentions quasi-organizations — verify they exist: {quasi_orgs[:5]}")
     return warnings
+
+
+def filter_fixable(reasons: list[str]) -> list[str]:
+    """Drop reasons Claude has no information to fix (e.g. broken external URLs —
+    the model doesn't know which URLs exist). Passing them back into the prompt
+    just adds noise."""
+    return [r for r in reasons if not r.startswith("broken external URLs")]
 
 
 def validate_article(

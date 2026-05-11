@@ -110,8 +110,7 @@ def _source_to_domain(source: str) -> str:
     }.get(s, s.replace(" ", ""))
 
 
-def _fetch_rss(query: str, limit: int = 8) -> list[tuple[str, str]]:
-    """Returns list of (title, source_domain) tuples."""
+def _fetch_google_news(query: str, limit: int = 8) -> list[tuple[str, str]]:
     url = f"https://news.google.com/rss/search?q={quote_plus(query)}&hl=en-US&gl=US&ceid=US:en"
     try:
         feed = feedparser.parse(url)
@@ -124,6 +123,38 @@ def _fetch_rss(query: str, limit: int = 8) -> list[tuple[str, str]]:
         if title and len(title) > 12:
             items.append((title, _source_to_domain(source) if source else ""))
     return items
+
+
+def _fetch_bing_news(query: str, limit: int = 8) -> list[tuple[str, str]]:
+    """Bing News RSS. Source is in entry.source.title or the link domain."""
+    url = f"https://www.bing.com/news/search?q={quote_plus(query)}&format=RSS"
+    try:
+        feed = feedparser.parse(url)
+    except Exception:
+        return []
+    items = []
+    for entry in feed.entries[:limit]:
+        title = (entry.get("title") or "").strip()
+        if not title or len(title) <= 12:
+            continue
+        source_obj = entry.get("source") or {}
+        source_name = source_obj.get("title") if isinstance(source_obj, dict) else ""
+        domain = _source_to_domain(source_name) if source_name else _domain_from_link(entry.get("link", ""))
+        items.append((title, domain))
+    return items
+
+
+def _domain_from_link(link: str) -> str:
+    m = re.match(r"https?://([^/]+)/", link)
+    if not m:
+        return ""
+    domain = m.group(1).lower()
+    return domain[4:] if domain.startswith("www.") else domain
+
+
+def _fetch_rss(query: str, limit: int = 8) -> list[tuple[str, str]]:
+    """Merge Google News + Bing News for redundancy and source diversity."""
+    return _fetch_google_news(query, limit) + _fetch_bing_news(query, limit)
 
 
 def _build_queries(config: dict) -> list[str]:

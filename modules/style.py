@@ -16,6 +16,7 @@ import re
 STYLES = {
     "how_to": {
         "name": "How-To Tutorial",
+        "min_h2": 4,
         "structure": (
             "- Hook: a concrete moment when the reader needs this skill — author's own first try.\n"
             "- 'What you'll need' — short list of tools / products / prerequisites.\n"
@@ -32,6 +33,7 @@ STYLES = {
     },
     "comparison": {
         "name": "Comparison / Versus",
+        "min_h2": 4,
         "structure": (
             "- Hook: why the choice matters — set up the dilemma.\n"
             "- 'At a glance' H2 with a brief side-by-side summary.\n"
@@ -48,6 +50,7 @@ STYLES = {
     },
     "buyers_guide": {
         "name": "Buyer's Guide",
+        "min_h2": 4,
         "structure": (
             "- Hook: the buying frustration the reader is in right now.\n"
             "- 'What to look for' H2 with 4-6 H3 criteria (e.g., material, certifications, size).\n"
@@ -65,6 +68,7 @@ STYLES = {
     },
     "deep_dive": {
         "name": "Deep-Dive Explainer",
+        "min_h2": 5,
         "structure": (
             "- Hook: a counterintuitive or surprising opening fact about the topic.\n"
             "- 'The basics' H2 — definition and why it matters.\n"
@@ -81,6 +85,7 @@ STYLES = {
     },
     "myth_busting": {
         "name": "Myth-Busting",
+        "min_h2": 4,
         "structure": (
             "- Hook: how widespread the misconceptions are — author's own past mistake.\n"
             "- 'How these myths spread' short H2 (1-2 paragraphs).\n"
@@ -97,6 +102,7 @@ STYLES = {
     },
     "quick_tips": {
         "name": "Quick Tips List",
+        "min_h2": 6,
         "structure": (
             "- Hook: the audience-specific pain these tips address.\n"
             "- 8-12 H2 sections, each one a single tip. Each H2 is the tip stated as a directive "
@@ -147,3 +153,8 @@ def render(style_key: str) -> str:
         f"{style['structure']}\n"
         f"Voice and intent: {style['intent']}\n"
     )
+
+
+def min_h2(style_key: str) -> int:
+    """Minimum H2 count required for the style. Falls back to 4 if style is unknown."""
+    return (STYLES.get(style_key) or {}).get("min_h2", 4)

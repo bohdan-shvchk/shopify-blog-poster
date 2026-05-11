@@ -1,8 +1,9 @@
 """Fetch the active product catalog from Shopify Admin GraphQL API.
 
 Results are cached per-store in products_cache.json with a 24h TTL so we don't
-hit Shopify on every run. Returned shape is a list of dicts with keys:
-title, handle, url, description, product_type, tags, embedding.
+hit Shopify on every run. Embeddings live in a separate products_embeddings.json
+keyed by handle — this keeps the human-readable cache file small and lets us
+recompute embeddings without re-fetching the catalog.
 
 The embedding is built from title + description + tags + product_type so we can
 rank products by relevance to the article topic before sending to the LLM.
@@ -78,35 +79,84 @@ def _product_text(p: dict) -> str:
     return " ".join(filter(None, parts))
 
 
-def _ensure_embeddings(products: list[dict]) -> bool:
-    """Compute and attach embeddings for products that don't have one. Returns True if anything changed."""
+def _embeddings_file(store_path: Path) -> Path:
+    return store_path / "products_embeddings.json"
+
+
+def _load_embeddings(store_path: Path) -> dict[str, list[float]]:
+    f = _embeddings_file(store_path)
+    if not f.exists():
+        return {}
+    with open(f) as fp:
+        return json.load(fp)
+
+
+def _save_embeddings(store_path: Path, mapping: dict[str, list[float]]) -> None:
+    with open(_embeddings_file(store_path), "w") as fp:
+        json.dump(mapping, fp, indent=2)
+
+
+def _migrate_inline_embeddings(products: list[dict], mapping: dict[str, list[float]]) -> bool:
+    """Pull embeddings out of legacy cache entries into the mapping. Returns True if migration happened."""
+    migrated = False
+    for p in products:
+        emb = p.pop("embedding", None)
+        if emb and p["handle"] not in mapping:
+            mapping[p["handle"]] = emb
+            migrated = True
+    return migrated
+
+
+def _attach_embeddings(products: list[dict], mapping: dict[str, list[float]]) -> bool:
+    """Attach embeddings from mapping to products in-memory; compute and add missing ones to mapping.
+    Returns True if mapping changed (caller should persist)."""
     changed = False
     for p in products:
-        if not p.get("embedding"):
-            p["embedding"] = dedup.embed(_product_text(p))
+        handle = p["handle"]
+        emb = mapping.get(handle)
+        if emb is None:
+            emb = dedup.embed(_product_text(p))
+            mapping[handle] = emb
             changed = True
+        p["embedding"] = emb
     return changed
 
 
 def get_products(store_path: Path, config: dict, force_refresh: bool = False) -> list[dict]:
     cache_file = store_path / "products_cache.json"
+    embeddings_map = _load_embeddings(store_path)
+
+    cache_hit = False
+    products: list[dict] = []
+    fetched_at = time.time()
+
     if not force_refresh and cache_file.exists():
         with open(cache_file) as f:
             cached = json.load(f)
         if time.time() - cached.get("fetched_at", 0) < _CACHE_TTL_SECONDS:
             products = cached.get("products", [])
-            if _ensure_embeddings(products):
-                with open(cache_file, "w") as f:
-                    json.dump({"fetched_at": cached.get("fetched_at", time.time()), "products": products}, f, indent=2, ensure_ascii=False)
-            return products
+            fetched_at = cached.get("fetched_at", fetched_at)
+            cache_hit = True
 
-    domain = config["shopify_domain"]
-    token = os.environ["SHOPIFY_TOKEN"]
-    products = _fetch_all(domain, token)
-    _ensure_embeddings(products)
+    if not cache_hit:
+        domain = config["shopify_domain"]
+        token = os.environ["SHOPIFY_TOKEN"]
+        products = _fetch_all(domain, token)
+        fetched_at = time.time()
 
-    with open(cache_file, "w") as f:
-        json.dump({"fetched_at": time.time(), "products": products}, f, indent=2, ensure_ascii=False)
+    migrated = _migrate_inline_embeddings(products, embeddings_map)
+    embeddings_changed = _attach_embeddings(products, embeddings_map)
+
+    if not cache_hit or migrated:
+        # rewrite cache without inline embeddings
+        with open(cache_file, "w") as f:
+            json.dump(
+                {"fetched_at": fetched_at, "products": [{k: v for k, v in p.items() if k != "embedding"} for p in products]},
+                f, indent=2, ensure_ascii=False,
+            )
+    if embeddings_changed or migrated:
+        _save_embeddings(store_path, embeddings_map)
+
     return products
 
 

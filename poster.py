@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 import argparse
 import json
-import re
 import sys
 import urllib.request
 from datetime import date
@@ -11,6 +10,7 @@ from modules import conflict, dedup, evergreen, products, quality, style, topic_
 from modules.generator import generate_article
 from modules.image_fetcher import count_h2, fetch_images, inject_images_into_html
 from modules.publisher import publish_article
+from modules.slug import slugify
 
 
 _MAX_GENERATION_RETRIES = 2
@@ -33,15 +33,14 @@ def send_telegram(message: str) -> None:
         print(f"Telegram failed: {e}")
 
 
-def slugify(text: str) -> str:
-    text = text.lower().strip()
-    text = re.sub(r"[^\w\s-]", "", text)
-    return re.sub(r"[\s_-]+", "-", text)
-
-
 def load_config(store_path: Path) -> dict:
     with open(store_path / "store_config.json") as f:
         return json.load(f)
+
+
+def save_config(store_path: Path, config: dict) -> None:
+    with open(store_path / "store_config.json", "w") as f:
+        json.dump(config, f, indent=2, ensure_ascii=False)
 
 
 def load_published(store_path: Path) -> list:
@@ -134,7 +133,7 @@ def generate_with_quality_gate(
             if attempt > 0:
                 send_telegram(f"Published after {attempt} retry(ies) for '{topic}'")
             return article
-        last_reasons = reasons
+        last_reasons = quality.filter_fixable(reasons)
         print(f"       quality check failed: {reasons}")
     raise RuntimeError(f"Could not produce a valid article: {last_reasons}")
 
@@ -151,6 +150,10 @@ def main():
         sys.exit(1)
 
     config = load_config(store_path)
+
+    if config.get("enabled") is False:
+        print(f"Store '{args.store}' is disabled in store_config.json (enabled: false). Skipping.")
+        sys.exit(0)
 
     print(f"[1/6] Loading history for '{config['niche']}'...")
     pub_records = backfill_embeddings(load_published(store_path))
@@ -173,11 +176,14 @@ def main():
     print(f"      Topic: {topic}  (source: {pick['source']})")
 
     today = date.today().isoformat()
-    if any(r.get("date") == today and r.get("topic") == topic for r in pub_records):
-        msg = f"Duplicate run today for topic: {topic}. Skipping."
-        print(f"      {msg}")
-        send_telegram(msg)
-        sys.exit(0)
+    todays_embeddings = [r["embedding"] for r in pub_records if r.get("date") == today and r.get("embedding")]
+    if todays_embeddings:
+        _, sim = dedup.find_most_similar(pick["embedding"], todays_embeddings)
+        if sim >= 0.85:
+            msg = f"Already published a near-duplicate today (similarity {sim:.2f}). Topic: {topic}. Skipping."
+            print(f"      {msg}")
+            send_telegram(msg)
+            sys.exit(0)
 
     print("[3/6] Fetching product catalog...")
     try:
@@ -223,7 +229,10 @@ def main():
         return
 
     print("[6/6] Publishing to Shopify...")
-    result = publish_article(article, config, cover_image)
+    config_before = dict(config)
+    result = publish_article(article, config, cover_image, catalog=catalog)
+    if config != config_before:
+        save_config(store_path, config)
     print(f"      Published: {result['handle']} (id: {result['id']})")
     if result.get("url"):
         print(f"      URL: {result['url']}")

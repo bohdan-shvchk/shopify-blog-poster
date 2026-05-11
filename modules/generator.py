@@ -1,10 +1,27 @@
 import json
 import os
 import re
+import time
 
+import anthropic
 from anthropic import Anthropic
 
 from . import style as style_module
+
+
+_RETRYABLE = (anthropic.RateLimitError, anthropic.APIConnectionError, anthropic.InternalServerError)
+
+
+def _create_with_backoff(client, **kwargs):
+    """Retry on 429 / 5xx / connection errors with exponential backoff.
+    Total wait across 4 attempts: 0 + 2 + 4 + 8 = 14s (last attempt re-raises)."""
+    for attempt in range(4):
+        try:
+            return client.messages.create(**kwargs)
+        except _RETRYABLE:
+            if attempt == 3:
+                raise
+            time.sleep(2 ** attempt)
 
 
 _MODEL = "claude-haiku-4-5-20251001"
@@ -133,7 +150,8 @@ def generate_article(
         previous_failure_block=_previous_failure_block(previous_failure_reasons),
     )
 
-    response = client.messages.create(
+    response = _create_with_backoff(
+        client,
         model=_MODEL,
         max_tokens=8192,
         system=_SYSTEM_PROMPT,
