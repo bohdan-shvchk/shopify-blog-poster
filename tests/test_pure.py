@@ -101,18 +101,6 @@ class QualityValidators(unittest.TestCase):
         self.assertTrue(any("numeric stats" in w for w in warnings))
         self.assertTrue(any("'Dr. X'-style experts" in w for w in warnings))
 
-    def test_filter_fixable_strips_url_reasons(self):
-        reasons = [
-            "too short: 100 words (min 800)",
-            "broken external URLs: ['https://x.com (404)']",
-            "title too long: 70 chars (max 60)",
-        ]
-        self.assertEqual(
-            quality.filter_fixable(reasons),
-            ["too short: 100 words (min 800)", "title too long: 70 chars (max 60)"],
-        )
-
-
 class ImageHelpers(unittest.TestCase):
     def test_topic_to_keywords_drops_stopwords_and_year(self):
         self.assertEqual(topic_to_keywords("The best retinol serum 2026 guide"), "retinol serum")

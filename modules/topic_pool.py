@@ -125,3 +125,25 @@ def remove(store_path: Path, topic: str) -> None:
     pool = load(store_path)
     pool = [p for p in pool if p["topic"] != topic]
     save(store_path, pool)
+
+
+def mark_failed(store_path: Path, topic: str, max_attempts: int = 2) -> int:
+    """Increment failed_attempts counter on the matching pool entry. If the
+    counter reaches max_attempts, drop the entry from the pool so we stop
+    re-picking the same failing topic day after day.
+    Returns the new attempts count (0 if topic was not in pool)."""
+    pool = load(store_path)
+    out = []
+    new_count = 0
+    for item in pool:
+        if item["topic"] != topic:
+            out.append(item)
+            continue
+        attempts = int(item.get("failed_attempts", 0)) + 1
+        new_count = attempts
+        if attempts >= max_attempts:
+            continue
+        item["failed_attempts"] = attempts
+        out.append(item)
+    save(store_path, out)
+    return new_count

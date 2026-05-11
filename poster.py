@@ -116,7 +116,6 @@ def generate_with_quality_gate(
     catalog_text = products.format_for_prompt(relevant_catalog, config) if relevant_catalog else ""
     style_order = style.ranked_styles(topic)
     last_reasons: list[str] = []
-    last_full_reasons: list[str] = []
     for attempt in range(_MAX_GENERATION_RETRIES + 1):
         style_key = style_order[attempt % len(style_order)]
         print(f"       attempt {attempt + 1}/{_MAX_GENERATION_RETRIES + 1} — style: {style.STYLES[style_key]['name']}")
@@ -125,19 +124,22 @@ def generate_with_quality_gate(
             relationship=relationship, style_key=style_key,
             previous_failure_reasons=last_reasons or None,
         )
+        sanitize_notes = quality.sanitize_external_urls(article)
+        for n in sanitize_notes:
+            print(f"       SANITIZE: {n}")
         ok, reasons, warnings = quality.validate_article(article, catalog, style_key=style_key)
-        if warnings:
+        all_warnings = warnings + sanitize_notes
+        if all_warnings:
             for w in warnings:
                 print(f"       WARN: {w}")
-            send_telegram(f"Quality warnings for '{topic}':\n" + "\n".join(f"- {w}" for w in warnings))
+            send_telegram(f"Quality warnings for '{topic}':\n" + "\n".join(f"- {w}" for w in all_warnings))
         if ok:
             if attempt > 0:
                 send_telegram(f"Published after {attempt} retry(ies) for '{topic}'")
             return article
-        last_reasons = quality.filter_fixable(reasons)
-        last_full_reasons = reasons
+        last_reasons = reasons
         print(f"       quality check failed: {reasons}")
-    raise RuntimeError(f"Could not produce a valid article: {last_full_reasons}")
+    raise RuntimeError(f"Could not produce a valid article: {last_reasons}")
 
 
 def main():
@@ -209,8 +211,10 @@ def main():
     try:
         article = generate_with_quality_gate(topic, config, catalog, pub_topics, relationship=relationship)
     except (RuntimeError, json.JSONDecodeError) as e:
+        attempts = topic_pool.mark_failed(store_path, topic)
+        dropped = " (dropped from pool)" if attempts >= 2 else f" (fail #{attempts})"
         print(f"ERROR: {e}")
-        send_telegram(f"Generation failed for topic: {topic}\n{type(e).__name__}: {e}")
+        send_telegram(f"Generation failed for topic: {topic}{dropped}\n{type(e).__name__}: {e}")
         sys.exit(0)
     print(f"      Title: {article['title']}")
 

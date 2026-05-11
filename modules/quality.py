@@ -5,7 +5,10 @@ Hard gates (cause regeneration):
   - word count below threshold
   - title missing or too long
   - meta_description missing or too long
-  - external Source URLs that 404
+
+External URLs are NOT a hard gate. They are sanitized in-place
+(broken links stripped to plain text, fallback Sources injected
+if none remain) — see sanitize_external_urls().
 
 Soft warnings (logged + Telegram, do not fail the gate):
   - suspicious statistics ("87% of women...")
@@ -100,10 +103,10 @@ _BROWSER_HEADERS = {
 
 
 def _probe_url(url: str) -> str | None:
-    """Returns failure description if the URL is broken, else None.
-    Some sites (notably Cloudflare-fronted) reject HEAD with 403/405 but accept GET,
-    so a HEAD failure falls back to a streamed GET before we declare it broken.
-    403 is treated as a bot-block (live URL) rather than a real breakage."""
+    """Returns short failure reason (e.g. '404', 'ConnectionError') if the URL
+    is broken, else None. Some sites reject HEAD with 403/405 but accept GET,
+    so a HEAD failure falls back to a streamed GET. 403 is treated as bot-block
+    (URL is live), not breakage."""
     try:
         resp = requests.head(url, timeout=5, allow_redirects=True, headers=_BROWSER_HEADERS)
         if resp.status_code < 400 or resp.status_code == 403:
@@ -113,22 +116,63 @@ def _probe_url(url: str) -> str | None:
             if resp.status_code == 403:
                 return None
             if resp.status_code >= 400:
-                return f"{url} ({resp.status_code})"
+                return str(resp.status_code)
         finally:
             resp.close()
         return None
     except requests.RequestException as e:
-        return f"{url} ({type(e).__name__})"
+        return type(e).__name__
 
 
-def _check_external_urls(html: str) -> list[str]:
-    """HEAD each external URL in parallel. Return list of broken URLs."""
+def _check_external_urls(html: str) -> dict[str, str]:
+    """HEAD each external URL in parallel. Returns {url: reason} for broken ones."""
     urls = extract_external_urls(html)
     if not urls:
-        return []
+        return {}
     with ThreadPoolExecutor(max_workers=4) as pool:
-        results = pool.map(_probe_url, urls)
-    return [r for r in results if r]
+        results = list(pool.map(_probe_url, urls))
+    return {url: reason for url, reason in zip(urls, results) if reason}
+
+
+_FALLBACK_SOURCES = [
+    ("https://www.fda.gov", "U.S. Food and Drug Administration"),
+    ("https://www.cdc.gov", "Centers for Disease Control and Prevention"),
+    ("https://www.nih.gov", "National Institutes of Health"),
+    ("https://www.who.int", "World Health Organization"),
+]
+
+_ANCHOR_TAG_PATTERN = re.compile(
+    r'<a\s+[^>]*href=["\']([^"\']+)["\'][^>]*>(.*?)</a>',
+    re.IGNORECASE | re.DOTALL,
+)
+
+
+def sanitize_external_urls(article: dict) -> list[str]:
+    """Strip anchor tags pointing to broken external URLs (keep inner text).
+    Inject a fallback Sources section with whitelist domain homepages if no
+    working external URLs remain. Mutates article['html_body'].
+    Returns list of human-readable notes for logging."""
+    html = article.get("html_body", "")
+    broken = _check_external_urls(html)
+    if not broken:
+        return []
+
+    def _replace(m):
+        url = m.group(1)
+        return m.group(2) if url in broken else m.group(0)
+
+    cleaned = _ANCHOR_TAG_PATTERN.sub(_replace, html)
+    notes = [f"removed broken URL: {url} ({code})" for url, code in broken.items()]
+
+    if not extract_external_urls(cleaned):
+        sources_html = "\n<h2>Sources</h2>\n<ul>\n" + "\n".join(
+            f'  <li><a href="{u}">{n}</a></li>' for u, n in _FALLBACK_SOURCES[:3]
+        ) + "\n</ul>"
+        cleaned += sources_html
+        notes.append("no working external sources remained — injected fallback whitelist")
+
+    article["html_body"] = cleaned
+    return notes
 
 
 def validate_structure(html: str, style_key: str | None) -> list[str]:
@@ -171,20 +215,13 @@ def collect_warnings(html: str) -> list[str]:
     return warnings
 
 
-def filter_fixable(reasons: list[str]) -> list[str]:
-    """Drop reasons Claude has no information to fix (e.g. broken external URLs —
-    the model doesn't know which URLs exist). Passing them back into the prompt
-    just adds noise."""
-    return [r for r in reasons if not r.startswith("broken external URLs")]
-
-
 def validate_article(
     article: dict,
     catalog: list[dict],
-    check_urls: bool = True,
     style_key: str | None = None,
 ) -> tuple[bool, list[str], list[str]]:
-    """Run all gates. Returns (ok, hard_reasons, soft_warnings)."""
+    """Run all gates. Returns (ok, hard_reasons, soft_warnings).
+    Assumes external URLs were already sanitized by sanitize_external_urls()."""
     reasons = []
     html = article.get("html_body", "")
 
@@ -209,11 +246,6 @@ def validate_article(
         reasons.append(f"meta_description too long: {len(meta)} chars (max 160)")
 
     reasons.extend(validate_structure(html, style_key))
-
-    if check_urls:
-        broken = _check_external_urls(html)
-        if broken:
-            reasons.append(f"broken external URLs: {broken}")
 
     warnings = collect_warnings(html)
 
