@@ -88,16 +88,30 @@ def validate_length(html: str, min_words: int = 800) -> tuple[bool, int]:
     return (words >= min_words, words)
 
 
+_BROWSER_HEADERS = {
+    "User-Agent": (
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/120.0.0.0 Safari/537.36"
+    ),
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    "Accept-Language": "en-US,en;q=0.9",
+}
+
+
 def _probe_url(url: str) -> str | None:
     """Returns failure description if the URL is broken, else None.
     Some sites (notably Cloudflare-fronted) reject HEAD with 403/405 but accept GET,
-    so a HEAD failure falls back to a streamed GET before we declare it broken."""
+    so a HEAD failure falls back to a streamed GET before we declare it broken.
+    403 is treated as a bot-block (live URL) rather than a real breakage."""
     try:
-        resp = requests.head(url, timeout=5, allow_redirects=True)
-        if resp.status_code < 400:
+        resp = requests.head(url, timeout=5, allow_redirects=True, headers=_BROWSER_HEADERS)
+        if resp.status_code < 400 or resp.status_code == 403:
             return None
-        resp = requests.get(url, timeout=5, allow_redirects=True, stream=True)
+        resp = requests.get(url, timeout=5, allow_redirects=True, stream=True, headers=_BROWSER_HEADERS)
         try:
+            if resp.status_code == 403:
+                return None
             if resp.status_code >= 400:
                 return f"{url} ({resp.status_code})"
         finally:

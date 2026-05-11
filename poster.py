@@ -116,6 +116,7 @@ def generate_with_quality_gate(
     catalog_text = products.format_for_prompt(relevant_catalog, config) if relevant_catalog else ""
     style_order = style.ranked_styles(topic)
     last_reasons: list[str] = []
+    last_full_reasons: list[str] = []
     for attempt in range(_MAX_GENERATION_RETRIES + 1):
         style_key = style_order[attempt % len(style_order)]
         print(f"       attempt {attempt + 1}/{_MAX_GENERATION_RETRIES + 1} — style: {style.STYLES[style_key]['name']}")
@@ -134,8 +135,9 @@ def generate_with_quality_gate(
                 send_telegram(f"Published after {attempt} retry(ies) for '{topic}'")
             return article
         last_reasons = quality.filter_fixable(reasons)
+        last_full_reasons = reasons
         print(f"       quality check failed: {reasons}")
-    raise RuntimeError(f"Could not produce a valid article: {last_reasons}")
+    raise RuntimeError(f"Could not produce a valid article: {last_full_reasons}")
 
 
 def main():
