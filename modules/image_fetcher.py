@@ -48,15 +48,40 @@ def _fetch_pexels(query: str, count: int = 1, page: int = 1) -> list:
         return []
 
 
+_GENERIC_ANCHOR_WORDS = {
+    "woman", "women", "man", "men", "person", "people", "home", "use", "using",
+    "the", "a", "an", "for", "with", "and", "or",
+}
+
+
+def _niche_anchor(fallback_query: str, max_words: int = 2) -> str:
+    """Pick 1-2 distinctive niche words from the store's image_query to anchor
+    stock-photo searches. 'woman skincare beauty' → 'skincare beauty'. Without
+    an anchor, a topic like 'Red Light Therapy' matches traffic lights on Pexels."""
+    words = [w for w in fallback_query.lower().split() if w and w not in _GENERIC_ANCHOR_WORDS]
+    return " ".join(words[:max_words])
+
+
 def fetch_images(primary_query: str, fallback_query: str, count: int = 3) -> list:
-    """Try the topic-specific query first; fall back to the broader niche query
-    if the topic query yields nothing. Cover and inline use different pages so
-    we never serve the same image twice. The primary query is reduced to
-    stock-photo-friendly keywords."""
+    """Try the niche-anchored topic query first, then unanchored topic keywords,
+    then the broader niche query. Anchoring forces Pexels to weigh both the topic
+    and the niche context — without it 'red light therapy' returns traffic lights.
+    Cover and inline use different pages so we never serve the same image twice."""
     keyword_query = topic_to_keywords(primary_query)
-    cover = _fetch_pexels(keyword_query, 1, 1) or _fetch_pexels(fallback_query, 1, 1)
+    anchor = _niche_anchor(fallback_query)
+    anchored = f"{keyword_query} {anchor}".strip() if anchor else keyword_query
+
+    cover = (
+        _fetch_pexels(anchored, 1, 1)
+        or _fetch_pexels(keyword_query, 1, 1)
+        or _fetch_pexels(fallback_query, 1, 1)
+    )
     inline_n = max(0, count - 1)
-    inline = _fetch_pexels(keyword_query, inline_n, 2) or _fetch_pexels(fallback_query, inline_n, 2)
+    inline = (
+        _fetch_pexels(anchored, inline_n, 2)
+        or _fetch_pexels(keyword_query, inline_n, 2)
+        or _fetch_pexels(fallback_query, inline_n, 2)
+    )
     return cover + inline
 
 

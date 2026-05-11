@@ -8,7 +8,7 @@ from __future__ import annotations
 import unittest
 
 from modules import quality, style, topic_finder
-from modules.image_fetcher import count_h2, topic_to_keywords
+from modules.image_fetcher import _niche_anchor, count_h2, topic_to_keywords
 from modules.publisher import (
     _extract_faq_pairs,
     _extract_product_handles,
@@ -113,6 +113,15 @@ class ImageHelpers(unittest.TestCase):
 
     def test_count_h2(self):
         self.assertEqual(count_h2("<h2>a</h2><H2 class='x'>b</H2><h3>c</h3>"), 2)
+
+    def test_niche_anchor_drops_generic_words(self):
+        self.assertEqual(_niche_anchor("woman skincare beauty"), "skincare beauty")
+
+    def test_niche_anchor_caps_at_two_words(self):
+        self.assertEqual(_niche_anchor("skincare beauty wellness gadgets"), "skincare beauty")
+
+    def test_niche_anchor_empty_when_all_generic(self):
+        self.assertEqual(_niche_anchor("the home use"), "")
 
 
 class TopicFinderHelpers(unittest.TestCase):
