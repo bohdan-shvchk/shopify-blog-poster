@@ -79,15 +79,16 @@ Author: {author_name} — {author_bio}
 
 PRODUCT CATALOG (the ONLY products you may mention by name or link):
 {product_catalog}
-
+{category_links_block}
 Already-published topics (avoid overlap, do not rehash):
 {published_topics}
 {style_block}{previous_failure_block}
 Universal rules (apply on top of the format above):
 - Use semantic HTML only: <h2>, <h3>, <p>, <ul>, <li>, <a>. Never use <h1>.
-- Inside the body: 2-3 internal links using <a href="..."> tags pointing ONLY to URLs from
-  the product catalog above. Use natural anchor text. If the catalog is empty or no product
-  fits, OMIT product links entirely — do NOT invent any.
+- Inside the body: EXACTLY 2-3 internal links total — never more than 3.
+  Prefer a mix: 1-2 product links from the catalog above + 1 link to a category page
+  from the "Category links" list (if provided). Use natural anchor text.
+  Do NOT invent URLs. If the catalog is empty AND no category fits, omit links entirely.
 - The FAQ section uses <h2>FAQ</h2> with <h3> for each question.
 - The Sources section is a <ul><li><a href="...">...</a></li></ul> with 2-3 external citations.
 
@@ -103,6 +104,20 @@ def _extract_tool_input(response, tool_name: str) -> dict:
     raise RuntimeError(
         f"Model did not call tool '{tool_name}'. Stop reason: {response.stop_reason}"
     )
+
+
+def _category_links_block(config: dict) -> str:
+    """Render the category/collection links from config.internal_links so the
+    model can include one in the article body for topical clustering."""
+    links = config.get("internal_links") or []
+    categories = [
+        l for l in links
+        if "/collections/" in (l.get("url") or "") and l.get("anchor") and l.get("url")
+    ]
+    if not categories:
+        return ""
+    bullets = "\n".join(f'- "{l["anchor"]}" → {l["url"]}' for l in categories)
+    return f"\nCategory links you may use (in addition to the product catalog):\n{bullets}\n"
 
 
 def _previous_failure_block(reasons: list[str] | None) -> str:
@@ -161,6 +176,7 @@ def generate_article(
         author_name=config.get("author_name") or config.get("author", "Editorial Team"),
         author_bio=config.get("author_bio", "writes about consumer wellness products"),
         product_catalog=catalog,
+        category_links_block=_category_links_block(config),
         published_topics=published_sample,
         relationship_block=_relationship_block(relationship),
         style_block=style_block,

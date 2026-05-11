@@ -14,6 +14,7 @@ Without varied queries the pool would be dominated by listicles.
 from __future__ import annotations
 
 import re
+from datetime import date
 from urllib.parse import quote_plus
 
 import feedparser
@@ -76,6 +77,19 @@ def _score(title: str, source_count: int, domain_weight: float) -> float:
     if any(year in title for year in ("2026", "2027")):
         score += 0.5
     return score * domain_weight
+
+
+_STALE_YEAR_PATTERN = re.compile(r"\b(20\d{2})\b")
+
+
+def _has_stale_year(title: str) -> bool:
+    """True if the title mentions a year strictly before the current one
+    (e.g. '2024 trends' picked up in 2026 — stale on arrival)."""
+    current = date.today().year
+    for match in _STALE_YEAR_PATTERN.findall(title):
+        if int(match) < current:
+            return True
+    return False
 
 
 def _split_title_and_source(raw: str) -> tuple[str, str]:
@@ -192,6 +206,8 @@ def discover_candidates(config: dict) -> list[dict]:
     seen_stems = set()
     for items in items_per_query:
         for title, _ in items:
+            if _has_stale_year(title):
+                continue
             stem = _slugify(title)[:60]
             if stem in seen_stems:
                 continue

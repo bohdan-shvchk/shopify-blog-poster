@@ -60,16 +60,27 @@ def fetch_images(primary_query: str, fallback_query: str, count: int = 3) -> lis
     return cover + inline
 
 
+_BOILERPLATE_H2 = re.compile(
+    r"^\s*(faq|frequently\s+asked|sources?|references?|further\s+reading|"
+    r"questions?\s*(?:&|and)\s*answers?)\b",
+    re.IGNORECASE,
+)
+
+
 def inject_images_into_html(html: str, image_urls: list, topic: str = "") -> str:
     """Distribute images evenly across H2 sections (skipping the first H2,
-    which is usually the intro/hook). Alt text is derived from each section's
-    H2 so it stays contextual."""
+    which is usually the intro/hook, and skipping FAQ/Sources/etc. boilerplate
+    sections at the end). Alt text is derived from each section's H2 so it
+    stays contextual."""
     if not image_urls:
         return html
 
     h2_pattern = re.compile(r"(<h2[^>]*>(.*?)</h2>)", re.IGNORECASE | re.DOTALL)
     matches = list(h2_pattern.finditer(html))
-    candidates = matches[1:]
+    candidates = [
+        m for m in matches[1:]
+        if not _BOILERPLATE_H2.match(_strip_tags(m.group(2)))
+    ]
     if not candidates:
         return html
 

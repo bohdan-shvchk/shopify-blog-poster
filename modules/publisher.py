@@ -225,10 +225,13 @@ def publish_article(article: dict, config: dict, image_url=None, catalog: list[d
         variables["article"]["image"] = {"url": image_url}
 
     if article.get("meta_description"):
+        # Shopify's native SEO description lives in the global.description_tag
+        # metafield. Themes read it via {{ article.metafields.global.description_tag }}
+        # and Dawn/most themes fall back to it for <meta name="description">.
         variables["article"]["metafields"] = [
             {
-                "namespace": "seo",
-                "key": "description",
+                "namespace": "global",
+                "key": "description_tag",
                 "value": article["meta_description"],
                 "type": "single_line_text_field",
             }
