@@ -119,16 +119,11 @@ def generate_with_quality_gate(
     for attempt in range(_MAX_GENERATION_RETRIES + 1):
         style_key = style_order[attempt % len(style_order)]
         print(f"       attempt {attempt + 1}/{_MAX_GENERATION_RETRIES + 1} — style: {style.STYLES[style_key]['name']}")
-        try:
-            article = generate_article(
-                topic, config, catalog_text, pub_topics,
-                relationship=relationship, style_key=style_key,
-                previous_failure_reasons=last_reasons or None,
-            )
-        except json.JSONDecodeError as e:
-            last_reasons = [f"invalid JSON from model (likely truncated output): {e}"]
-            print(f"       JSON parse failed, retrying: {e}")
-            continue
+        article = generate_article(
+            topic, config, catalog_text, pub_topics,
+            relationship=relationship, style_key=style_key,
+            previous_failure_reasons=last_reasons or None,
+        )
         ok, reasons, warnings = quality.validate_article(article, catalog, style_key=style_key)
         if warnings:
             for w in warnings:

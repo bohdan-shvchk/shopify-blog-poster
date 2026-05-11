@@ -1,6 +1,4 @@
-import json
 import os
-import re
 import time
 
 import anthropic
@@ -38,7 +36,37 @@ Strict rules — NEVER violate:
    If no catalog product fits, write generically about the category instead — do not invent.
 4. Cite 2-3 reputable external sources at the end (e.g., FDA, peer-reviewed journals,
    established publications). Only cite sources you are confident exist.
-5. Return STRICT JSON only — no markdown, no commentary, no code fences."""
+
+Return the article by calling the `submit_article` tool with the required fields."""
+
+
+_ARTICLE_TOOL = {
+    "name": "submit_article",
+    "description": "Submit the finished blog post. All fields are required.",
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "title": {
+                "type": "string",
+                "description": "SEO-optimized title, max 60 characters.",
+            },
+            "meta_description": {
+                "type": "string",
+                "description": "Meta description, max 160 characters, includes the primary keyword.",
+            },
+            "tags": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": "3-6 short topical tags.",
+            },
+            "html_body": {
+                "type": "string",
+                "description": "Article body as semantic HTML (h2/h3/p/ul/li/a). No h1. 900-1400 words.",
+            },
+        },
+        "required": ["title", "meta_description", "tags", "html_body"],
+    },
+}
 
 
 _USER_PROMPT = """Write a blog post for a {niche} store.
@@ -65,27 +93,16 @@ Universal rules (apply on top of the format above):
 
 Length: strictly 900-1400 words.
 {relationship_block}
-Return ONLY this exact JSON shape:
-{{
-  "title": "SEO-optimized title, max 60 chars",
-  "meta_description": "Max 160 chars, includes the primary keyword",
-  "tags": ["tag1", "tag2", "tag3"],
-  "html_body": "<p>Hook…</p><h2>…</h2>…"
-}}"""
+Call the `submit_article` tool with: title, meta_description, tags, html_body."""
 
 
-def _parse_json_response(raw: str) -> dict:
-    raw = raw.strip()
-    if "```" in raw:
-        raw = raw.split("```")[1]
-        if raw.startswith("json"):
-            raw = raw[4:]
-    start = raw.find("{")
-    end = raw.rfind("}") + 1
-    if start != -1 and end > start:
-        raw = raw[start:end]
-    raw = re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f]", "", raw)
-    return json.loads(raw.strip())
+def _extract_tool_input(response, tool_name: str) -> dict:
+    for block in response.content:
+        if getattr(block, "type", None) == "tool_use" and block.name == tool_name:
+            return block.input
+    raise RuntimeError(
+        f"Model did not call tool '{tool_name}'. Stop reason: {response.stop_reason}"
+    )
 
 
 def _previous_failure_block(reasons: list[str] | None) -> str:
@@ -155,6 +172,8 @@ def generate_article(
         model=_MODEL,
         max_tokens=8192,
         system=_SYSTEM_PROMPT,
+        tools=[_ARTICLE_TOOL],
+        tool_choice={"type": "tool", "name": "submit_article"},
         messages=[{"role": "user", "content": prompt}],
     )
-    return _parse_json_response(response.content[0].text)
+    return _extract_tool_input(response, "submit_article")
