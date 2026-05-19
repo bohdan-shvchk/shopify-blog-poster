@@ -137,10 +137,8 @@ def _extract_product_handles(html: str) -> list[str]:
     return list(seen.keys())
 
 
-def _product_schemas(html: str, catalog: list[dict] | None, base: str) -> list[dict]:
-    """Build a Product schema per catalog product mentioned in the article body.
-    Anchor text is unreliable, so name/url come from the catalog. Price is
-    intentionally omitted — we don't fetch it and refuse to fabricate a value."""
+def _product_schemas(html: str, catalog: list[dict] | None, base: str, currency: str = "USD") -> list[dict]:
+    """Build a Product schema per catalog product mentioned in the article body."""
     if not catalog:
         return []
     by_handle = {p["handle"].lower(): p for p in catalog}
@@ -149,12 +147,24 @@ def _product_schemas(html: str, catalog: list[dict] | None, base: str) -> list[d
         product = by_handle.get(handle)
         if not product:
             continue
-        schemas.append({
+        url = f"{base}/products/{handle}"
+        schema: dict = {
             "@context": "https://schema.org",
             "@type": "Product",
             "name": product["title"],
-            "url": f"{base}/products/{handle}",
-        })
+            "url": url,
+        }
+        price = product.get("price")
+        if price:
+            schema["offers"] = {
+                "@type": "Offer",
+                "url": url,
+                "priceCurrency": currency,
+                "price": str(price),
+                "availability": "https://schema.org/InStock",
+                "itemCondition": "https://schema.org/NewCondition",
+            }
+        schemas.append(schema)
     return schemas
 
 
@@ -182,7 +192,8 @@ def _schema_jsonld(article: dict, config: dict, image_url=None, article_url=None
     if faq:
         blocks.append(faq)
     if catalog and base:
-        blocks.extend(_product_schemas(article["html_body"], catalog, base))
+        currency = config.get("currency", "USD")
+        blocks.extend(_product_schemas(article["html_body"], catalog, base, currency))
     return "".join(
         f'<script type="application/ld+json">{json.dumps(b, ensure_ascii=False)}</script>'
         for b in blocks

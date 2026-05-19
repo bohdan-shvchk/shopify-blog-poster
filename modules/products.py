@@ -32,6 +32,9 @@ query Products($first: Int!, $after: String) {
         description
         productType
         tags
+        variants(first: 1) {
+          nodes { price }
+        }
       }
     }
     pageInfo { hasNextPage endCursor }
@@ -61,12 +64,15 @@ def _fetch_all(domain: str, token: str) -> list[dict]:
         data = body["data"]["products"]
         for edge in data["edges"]:
             n = edge["node"]
+            variants = (n.get("variants") or {}).get("nodes") or []
+            price = variants[0].get("price") if variants else None
             products.append({
                 "title": n["title"],
                 "handle": n["handle"],
                 "description": (n.get("description") or "")[:300],
                 "product_type": n.get("productType") or "",
                 "tags": n.get("tags") or [],
+                "price": price,
             })
         if not data["pageInfo"]["hasNextPage"]:
             break
