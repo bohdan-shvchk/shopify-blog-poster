@@ -233,20 +233,28 @@ def publish_article(article: dict, config: dict, image_url=None, catalog: list[d
     }
 
     if image_url:
-        variables["article"]["image"] = {"url": image_url}
+        variables["article"]["image"] = {"url": image_url, "altText": article["title"]}
 
+    brand = config.get("name", "")
+    title_tag = f"{article['title']} | {brand}" if brand else article["title"]
+    metafields = [
+        {
+            "namespace": "global",
+            "key": "title_tag",
+            "value": title_tag,
+            "type": "single_line_text_field",
+        }
+    ]
     if article.get("meta_description"):
-        # Shopify's native SEO description lives in the global.description_tag
-        # metafield. Themes read it via {{ article.metafields.global.description_tag }}
-        # and Dawn/most themes fall back to it for <meta name="description">.
-        variables["article"]["metafields"] = [
+        metafields.append(
             {
                 "namespace": "global",
                 "key": "description_tag",
                 "value": article["meta_description"],
                 "type": "single_line_text_field",
             }
-        ]
+        )
+    variables["article"]["metafields"] = metafields
 
     resp = requests.post(
         f"https://{domain}/admin/api/2024-10/graphql.json",
