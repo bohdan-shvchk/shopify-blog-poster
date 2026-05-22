@@ -221,17 +221,39 @@ class PublisherHelpers(unittest.TestCase):
 
     def test_product_schemas_use_catalog_names(self):
         html = '<a href="/products/foo">link text</a><a href="/products/missing">x</a>'
-        catalog = [{"handle": "foo", "title": "Real Foo Product"}]
-        schemas = _product_schemas(html, catalog, "https://shop.example")
+        catalog = [{
+            "handle": "foo", "title": "Real Foo Product",
+            "image": "https://cdn.example/foo.jpg",
+            "vendor": "Acme", "price": "19.99", "available": True,
+        }]
+        schemas = _product_schemas(html, catalog, "https://shop.example", "USD")
         self.assertEqual(len(schemas), 1)
-        self.assertEqual(schemas[0]["name"], "Real Foo Product")
-        self.assertEqual(schemas[0]["url"], "https://shop.example/products/foo")
-        self.assertEqual(schemas[0]["@type"], "Product")
+        s = schemas[0]
+        self.assertEqual(s["name"], "Real Foo Product")
+        self.assertEqual(s["url"], "https://shop.example/products/foo")
+        self.assertEqual(s["@type"], "Product")
+        self.assertEqual(s["image"], "https://cdn.example/foo.jpg")
+        self.assertEqual(s["brand"], {"@type": "Brand", "name": "Acme"})
+        self.assertEqual(s["mpn"], "foo")
+        self.assertEqual(s["offers"]["price"], "19.99")
+        self.assertEqual(s["offers"]["priceCurrency"], "USD")
+        self.assertEqual(s["offers"]["availability"], "https://schema.org/InStock")
+
+    def test_product_schemas_omit_optional_fields_when_missing(self):
+        html = '<a href="/products/foo">x</a>'
+        catalog = [{"handle": "foo", "title": "Bare Product"}]
+        schemas = _product_schemas(html, catalog, "https://shop.example", "USD")
+        self.assertEqual(len(schemas), 1)
+        s = schemas[0]
+        self.assertNotIn("image", s)
+        self.assertNotIn("brand", s)
+        self.assertNotIn("offers", s)
+        self.assertEqual(s["mpn"], "foo")
 
     def test_product_schemas_empty_when_no_catalog(self):
         html = '<a href="/products/foo">x</a>'
-        self.assertEqual(_product_schemas(html, None, "https://shop.example"), [])
-        self.assertEqual(_product_schemas(html, [], "https://shop.example"), [])
+        self.assertEqual(_product_schemas(html, None, "https://shop.example", "USD"), [])
+        self.assertEqual(_product_schemas(html, [], "https://shop.example", "USD"), [])
 
 
 class StyleStructureSourceOfTruth(unittest.TestCase):

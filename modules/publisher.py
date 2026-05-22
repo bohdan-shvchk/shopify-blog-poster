@@ -50,6 +50,31 @@ query BlogHandle($id: ID!) {
 """
 
 _blog_handle_cache: dict[str, str] = {}
+_shop_currency_cache: dict[str, str] = {}
+
+_SHOP_CURRENCY_QUERY = "{ shop { currencyCode } }"
+
+
+def _fetch_shop_currency(domain: str, token: str) -> str:
+    """Currency is store-wide and stable. Cached per-process so we don't query
+    Shopify on every article publish. Defaults to USD on failure — better to
+    emit a plausible currency than to omit `offers` entirely (which would re-trigger
+    the Search Console merchant-listings warning)."""
+    if domain in _shop_currency_cache:
+        return _shop_currency_cache[domain]
+    try:
+        resp = requests.post(
+            f"https://{domain}/admin/api/2024-10/graphql.json",
+            json={"query": _SHOP_CURRENCY_QUERY},
+            headers={"X-Shopify-Access-Token": token, "Content-Type": "application/json"},
+            timeout=15,
+        )
+        resp.raise_for_status()
+        currency = (resp.json().get("data") or {}).get("shop", {}).get("currencyCode") or "USD"
+    except requests.RequestException:
+        currency = "USD"
+    _shop_currency_cache[domain] = currency
+    return currency
 
 
 def _fetch_blog_handle(domain: str, blog_id: str, token: str) -> str | None:
@@ -137,8 +162,12 @@ def _extract_product_handles(html: str) -> list[str]:
     return list(seen.keys())
 
 
-def _product_schemas(html: str, catalog: list[dict] | None, base: str, currency: str = "USD") -> list[dict]:
-    """Build a Product schema per catalog product mentioned in the article body."""
+def _product_schemas(html: str, catalog: list[dict] | None, base: str, currency: str) -> list[dict]:
+    """Build a Product schema per catalog product mentioned in the article body.
+    Includes image, brand, mpn and offers to satisfy Google's merchant-listings
+    requirements (Search Console flagged missing `image` as critical and missing
+    global identifier as non-critical for the lunara-light.com property).
+    Anchor text is unreliable, so all fields come from the catalog."""
     if not catalog:
         return []
     by_handle = {p["handle"].lower(): p for p in catalog}
@@ -153,16 +182,19 @@ def _product_schemas(html: str, catalog: list[dict] | None, base: str, currency:
             "@type": "Product",
             "name": product["title"],
             "url": url,
+            "mpn": handle,
         }
-        price = product.get("price")
-        if price:
+        if product.get("image"):
+            schema["image"] = product["image"]
+        if product.get("vendor"):
+            schema["brand"] = {"@type": "Brand", "name": product["vendor"]}
+        if product.get("price"):
             schema["offers"] = {
                 "@type": "Offer",
                 "url": url,
+                "price": str(product["price"]),
                 "priceCurrency": currency,
-                "price": str(price),
-                "availability": "https://schema.org/InStock",
-                "itemCondition": "https://schema.org/NewCondition",
+                "availability": "https://schema.org/InStock" if product.get("available") else "https://schema.org/OutOfStock",
             }
         schemas.append(schema)
     return schemas
@@ -186,13 +218,12 @@ def _faq_schema(html: str) -> dict | None:
     }
 
 
-def _schema_jsonld(article: dict, config: dict, image_url=None, article_url=None, catalog=None, base=None) -> str:
+def _schema_jsonld(article: dict, config: dict, image_url=None, article_url=None, catalog=None, base=None, currency: str = "USD") -> str:
     blocks = [_article_schema(article, config, image_url, article_url)]
     faq = _faq_schema(article["html_body"])
     if faq:
         blocks.append(faq)
     if catalog and base:
-        currency = config.get("currency", "USD")
         blocks.extend(_product_schemas(article["html_body"], catalog, base, currency))
     return "".join(
         f'<script type="application/ld+json">{json.dumps(b, ensure_ascii=False)}</script>'
@@ -200,9 +231,9 @@ def _schema_jsonld(article: dict, config: dict, image_url=None, article_url=None
     )
 
 
-def _decorate_html(article: dict, config: dict, image_url=None, article_url=None, catalog=None, base=None) -> str:
+def _decorate_html(article: dict, config: dict, image_url=None, article_url=None, catalog=None, base=None, currency: str = "USD") -> str:
     return (
-        _schema_jsonld(article, config, image_url, article_url, catalog, base)
+        _schema_jsonld(article, config, image_url, article_url, catalog, base, currency)
         + article["html_body"]
         + _author_bio_html(config)
     )
@@ -220,7 +251,8 @@ def publish_article(article: dict, config: dict, image_url=None, catalog: list[d
     base = (config.get("public_domain") or f"https://{domain}").rstrip("/")
     expected_url = f"{base}/blogs/{blog_handle}/{expected_slug}" if blog_handle else None
 
-    body_html = _decorate_html(article, config, image_url, expected_url, catalog, base)
+    currency = _fetch_shop_currency(domain, token)
+    body_html = _decorate_html(article, config, image_url, expected_url, catalog, base, currency)
 
     variables = {
         "article": {

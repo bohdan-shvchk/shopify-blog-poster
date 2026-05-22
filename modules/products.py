@@ -32,8 +32,10 @@ query Products($first: Int!, $after: String) {
         description
         productType
         tags
+        vendor
+        featuredImage { url }
         variants(first: 1) {
-          nodes { price }
+          nodes { price availableForSale }
         }
       }
     }
@@ -64,15 +66,18 @@ def _fetch_all(domain: str, token: str) -> list[dict]:
         data = body["data"]["products"]
         for edge in data["edges"]:
             n = edge["node"]
-            variants = (n.get("variants") or {}).get("nodes") or []
-            price = variants[0].get("price") if variants else None
+            variant = (n.get("variants") or {}).get("nodes") or [{}]
+            v = variant[0] if variant else {}
             products.append({
                 "title": n["title"],
                 "handle": n["handle"],
                 "description": (n.get("description") or "")[:300],
                 "product_type": n.get("productType") or "",
                 "tags": n.get("tags") or [],
-                "price": price,
+                "vendor": n.get("vendor") or "",
+                "image": (n.get("featuredImage") or {}).get("url") or "",
+                "price": v.get("price"),
+                "available": v.get("availableForSale"),
             })
         if not data["pageInfo"]["hasNextPage"]:
             break
@@ -139,8 +144,11 @@ def get_products(store_path: Path, config: dict, force_refresh: bool = False) ->
     if not force_refresh and cache_file.exists():
         with open(cache_file) as f:
             cached = json.load(f)
-        if time.time() - cached.get("fetched_at", 0) < _CACHE_TTL_SECONDS:
-            products = cached.get("products", [])
+        cached_products = cached.get("products", [])
+        fresh = time.time() - cached.get("fetched_at", 0) < _CACHE_TTL_SECONDS
+        has_new_schema = not cached_products or "image" in cached_products[0]
+        if fresh and has_new_schema:
+            products = cached_products
             fetched_at = cached.get("fetched_at", fetched_at)
             cache_hit = True
 
