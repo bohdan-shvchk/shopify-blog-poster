@@ -75,6 +75,14 @@ def published_topics(records: list) -> list:
     return [r["topic"] for r in records if r.get("topic")]
 
 
+def published_image_urls(records: list) -> set[str]:
+    urls: set[str] = set()
+    for r in records:
+        for u in r.get("image_urls") or []:
+            urls.add(u)
+    return urls
+
+
 def _niche_embedding(config: dict) -> list:
     """Embedding of the store's niche + keywords. Used to filter offtopic candidates."""
     parts = [config["niche"]] + list(config.get("keywords", []))
@@ -230,8 +238,15 @@ def main():
     print("[5/6] Fetching images...")
     fallback_query = config.get("image_query") or config["niche"]
     h2_count = count_h2(article["html_body"])
-    desired_count = max(3, min(6, 1 + (h2_count - 1) // 2))
-    images = fetch_images(primary_query=topic, fallback_query=fallback_query, count=desired_count)
+    inline_count = 2 if h2_count >= 5 else 1
+    desired_count = 1 + inline_count
+    used_urls = published_image_urls(pub_records)
+    images = fetch_images(
+        primary_query=topic,
+        fallback_query=fallback_query,
+        count=desired_count,
+        used_urls=used_urls,
+    )
     cover_image = images[0] if images else None
     print(f"      Cover: {cover_image or 'none'}")
     print(f"      Inline images: {len(images[1:])} (across {h2_count} H2 sections)")
@@ -263,6 +278,7 @@ def main():
         "url": result.get("url"),
         "handle": result["handle"],
         "embedding": pick["embedding"],
+        "image_urls": images,
     })
     save_published(store_path, pub_records)
     topic_pool.remove(store_path, topic)

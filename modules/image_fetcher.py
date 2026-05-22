@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import os
 import re
 
@@ -48,6 +50,25 @@ def _fetch_pexels(query: str, count: int = 15, page: int = 1) -> list[tuple[str,
         return [(p["src"]["large"], (p.get("alt") or "").strip()) for p in photos]
     except Exception:
         return []
+
+
+def _fetch_pexels_pages(query: str, per_page: int = 15, pages: int = 3) -> list[tuple[str, str]]:
+    """Fetch multiple pages so the candidate pool is wide enough for cross-article
+    deduplication to still leave the judge real options. Stops early on empty page."""
+    out: list[tuple[str, str]] = []
+    for page in range(1, pages + 1):
+        batch = _fetch_pexels(query, per_page, page)
+        if not batch:
+            break
+        out.extend(batch)
+    return out
+
+
+def _normalize_url(url: str) -> str:
+    """Pexels CDN appends transform params (?auto=compress&w=...) that vary across
+    fetches of the same photo. Dedup on the path so the same photo isn't reused
+    just because its query string changed."""
+    return url.split("?", 1)[0]
 
 
 _GENERIC_ANCHOR_WORDS = {
@@ -125,32 +146,47 @@ def _judge_images(candidates: list[tuple[str, str]], topic: str, niche: str, min
     return candidates
 
 
-def fetch_images(primary_query: str, fallback_query: str, count: int = 3) -> list:
+def fetch_images(
+    primary_query: str,
+    fallback_query: str,
+    count: int = 3,
+    used_urls: set[str] | None = None,
+) -> list:
     """Fetch a pool from Pexels (niche-anchored query first, then fallbacks),
-    have Haiku judge which are contextually appropriate, return the top N URLs.
-    The judge filters out photos like 'traffic light' for 'red light therapy'
-    where keyword overlap fooled Pexels' search ranking."""
+    drop anything already used in prior posts, then let Haiku judge which are
+    contextually appropriate. Returns top N URLs.
+
+    `used_urls` is the set of every URL ever published by this store. Excluding
+    them at the pool stage is the only structural guard against cross-article
+    duplicates — without it the judge keeps re-ranking the same elite photos."""
     keyword_query = topic_to_keywords(primary_query)
     anchor = _niche_anchor(fallback_query)
     anchored = f"{keyword_query} {anchor}".strip() if anchor else keyword_query
 
-    pool_size = max(count * 4, 12)
+    used_norm = {_normalize_url(u) for u in (used_urls or [])}
+
     pool = (
-        _fetch_pexels(anchored, pool_size, 1)
-        or _fetch_pexels(keyword_query, pool_size, 1)
-        or _fetch_pexels(fallback_query, pool_size, 1)
+        _fetch_pexels_pages(anchored, 15, 3)
+        or _fetch_pexels_pages(keyword_query, 15, 3)
+        or _fetch_pexels_pages(fallback_query, 15, 3)
     )
     if not pool:
         return []
 
+    if used_norm:
+        pool = [(u, alt) for u, alt in pool if _normalize_url(u) not in used_norm]
+        if not pool:
+            return []
+
     judged = _judge_images(pool, topic=primary_query, niche=fallback_query, min_keep=count)
 
-    seen = set()
-    out = []
+    seen: set[str] = set()
+    out: list[str] = []
     for url, _ in judged:
-        if url in seen:
+        n = _normalize_url(url)
+        if n in seen:
             continue
-        seen.add(url)
+        seen.add(n)
         out.append(url)
         if len(out) >= count:
             break
