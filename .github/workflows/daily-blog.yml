@@ -1,7 +1,9 @@
-name: Daily Blog Post
+name: Weekly Blog Post
 
 on:
   workflow_dispatch:
+  schedule:
+    - cron: "0 5 * * 1"  # Monday 07:00 Slovenia (UTC+2)
 
 permissions:
   contents: write
