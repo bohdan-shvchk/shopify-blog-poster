@@ -45,7 +45,7 @@ def fetch_all_articles(domain: str, token: str) -> list[dict]:
     cursor = None
     while True:
         resp = requests.post(
-            f"https://{domain}/admin/api/2024-10/graphql.json",
+            f"https://{domain}/admin/api/2026-04/graphql.json",
             json={"query": _ARTICLES_QUERY, "variables": {"cursor": cursor}},
             headers={"X-Shopify-Access-Token": token, "Content-Type": "application/json"},
             timeout=30,

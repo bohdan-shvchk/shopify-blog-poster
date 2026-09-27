@@ -64,7 +64,7 @@ def _fetch_shop_currency(domain: str, token: str) -> str:
         return _shop_currency_cache[domain]
     try:
         resp = requests.post(
-            f"https://{domain}/admin/api/2024-10/graphql.json",
+            f"https://{domain}/admin/api/2026-04/graphql.json",
             json={"query": _SHOP_CURRENCY_QUERY},
             headers={"X-Shopify-Access-Token": token, "Content-Type": "application/json"},
             timeout=15,
@@ -82,7 +82,7 @@ def _fetch_blog_handle(domain: str, blog_id: str, token: str) -> str | None:
         return _blog_handle_cache[blog_id]
     try:
         resp = requests.post(
-            f"https://{domain}/admin/api/2024-10/graphql.json",
+            f"https://{domain}/admin/api/2026-04/graphql.json",
             json={"query": _BLOG_HANDLE_QUERY, "variables": {"id": blog_id}},
             headers={"X-Shopify-Access-Token": token, "Content-Type": "application/json"},
             timeout=15,
@@ -289,7 +289,7 @@ def publish_article(article: dict, config: dict, image_url=None, catalog: list[d
     variables["article"]["metafields"] = metafields
 
     resp = requests.post(
-        f"https://{domain}/admin/api/2024-10/graphql.json",
+        f"https://{domain}/admin/api/2026-04/graphql.json",
         json={"query": _ARTICLE_CREATE, "variables": variables},
         headers={
             "X-Shopify-Access-Token": token,

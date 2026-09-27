@@ -46,7 +46,7 @@ query Products($first: Int!, $after: String) {
 
 
 def _fetch_all(domain: str, token: str) -> list[dict]:
-    url = f"https://{domain}/admin/api/2024-10/graphql.json"
+    url = f"https://{domain}/admin/api/2026-04/graphql.json"
     headers = {"X-Shopify-Access-Token": token, "Content-Type": "application/json"}
     products = []
     cursor = None
