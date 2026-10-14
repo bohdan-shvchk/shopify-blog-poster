@@ -1,0 +1,8 @@
+{
+  "mode": "approved_briefs_only",
+  "existing_targets": [
+    {"cluster_id": "lunara-led-mask-buy", "primary_keyword": "lunara face mask", "target_url": "https://lunara-light.com/products/led-mask-face-neck"},
+    {"cluster_id": "led-mask-effectiveness", "primary_keyword": "do led face masks work", "target_url": "https://lunara-light.com/blogs/news/testing-led-face-masks-do-they-actually-improve-skin"}
+  ],
+  "approved_briefs": []
+}

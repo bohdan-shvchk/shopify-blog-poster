@@ -6,7 +6,7 @@ import urllib.request
 from datetime import date
 from pathlib import Path
 
-from modules import conflict, dedup, evergreen, products, quality, style, topic_finder, topic_pool
+from modules import conflict, dedup, evergreen, products, quality, seo_gate, style, topic_finder, topic_pool
 from modules.generator import generate_article
 from modules.image_fetcher import count_h2, fetch_images, inject_images_into_html
 from modules.publisher import publish_article
@@ -177,22 +177,40 @@ def main():
         sys.exit(0)
 
     print(f"[1/6] Loading history for '{config['niche']}'...")
-    pub_records = backfill_embeddings(load_published(store_path))
-    save_published(store_path, pub_records)
+    pub_records = load_published(store_path)
     pub_embeddings = published_embeddings(pub_records)
     pub_topics = published_topics(pub_records)
     print(f"      {len(pub_records)} previously published, {len(pub_embeddings)} with embeddings")
 
-    print("[2/6] Selecting topic...")
-    pick = None
-    for _ in range(_MAX_TOPIC_FALLBACKS):
-        pick = select_topic(store_path, config, pub_embeddings, pub_topics)
-        if pick:
-            break
-    if not pick:
-        print("ERROR: no safe topic could be found. Skipping today.")
-        send_telegram("No safe topic found. Skipping today.")
+    print("[2/6] Selecting approved SEO brief...")
+    try:
+        seo_policy = seo_gate.load_policy(store_path)
+    except (ValueError, json.JSONDecodeError) as error:
+        send_telegram(f"SEO publication stopped: {error}")
+        print(f"SEO publication stopped: {error}")
         sys.exit(0)
+    if seo_policy.get("mode") != "approved_briefs_only":
+        send_telegram("SEO publication stopped: policy mode is not approved_briefs_only")
+        sys.exit(0)
+    brief = None
+    for candidate in seo_policy.get("approved_briefs", []):
+        if any(r.get("topic") == candidate.get("topic") for r in pub_records):
+            continue
+        errors = seo_gate.review_brief(candidate, seo_policy, pub_records, config["public_domain"])
+        if errors:
+            send_telegram(f"SEO brief rejected: {candidate.get('topic', '(untitled)')}: {'; '.join(errors)}")
+            continue
+        brief = candidate
+        break
+    if brief is None:
+        print("SEO publication stopped: no valid unused approved brief")
+        send_telegram("SEO publication stopped: no valid unused approved brief")
+        sys.exit(0)
+    pub_records = backfill_embeddings(pub_records)
+    save_published(store_path, pub_records)
+    pub_embeddings = published_embeddings(pub_records)
+    pub_topics = published_topics(pub_records)
+    pick = {"topic": brief["topic"], "source": "approved_seo_brief", "embedding": dedup.embed(brief["topic"])}
     topic = pick["topic"]
     print(f"      Topic: {topic}  (source: {pick['source']})")
 
@@ -234,6 +252,12 @@ def main():
         send_telegram(f"Generation failed for topic: {topic}{dropped}\n{type(e).__name__}: {e}")
         sys.exit(0)
     print(f"      Title: {article['title']}")
+    seo_errors = seo_gate.review_article(article, brief, config["public_domain"])
+    if seo_errors:
+        message = f"SEO publication stopped: {topic}: {'; '.join(seo_errors)}"
+        print(message)
+        send_telegram(message)
+        sys.exit(0)
 
     print("[5/6] Fetching images...")
     fallback_query = config.get("image_query") or config["niche"]
@@ -274,6 +298,8 @@ def main():
         "topic": topic,
         "date": date.today().isoformat(),
         "source": pick["source"],
+        "primary_keyword": brief["primary_keyword"],
+        "target_url": brief["target_url"],
         "article_id": result["id"],
         "url": result.get("url"),
         "handle": result["handle"],
